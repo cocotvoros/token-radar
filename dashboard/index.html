@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pulse Radar — token launch radar</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <div>
+    <h1>Pulse Radar</h1>
+    <p class="sub">Which pre-token protocol is worth farming next — ranked by implied launch value.</p>
+  </div>
+  <div class="meta" id="meta">Loading…</div>
+</header>
+
+<nav class="tabs">
+  <button id="tab-board" class="active">Board</button>
+  <button id="tab-live">Live comparables</button>
+  <button id="tab-method">How it works</button>
+</nav>
+
+<section id="view-board">
+  <div class="controls">
+    <input id="q" type="search" placeholder="Search name or slug…" aria-label="Search">
+    <select id="cat" aria-label="Category"><option value="">All categories</option></select>
+    <select id="chain" aria-label="Chain"><option value="">All chains</option></select>
+    <label class="check"><input id="watch" type="checkbox"> Watchlist only</label>
+    <select id="sort" aria-label="Sort by">
+      <option value="rank">Sort: rank</option>
+      <option value="implied">Sort: implied value</option>
+      <option value="tvl">Sort: TVL</option>
+      <option value="growth">Sort: 7-day change</option>
+      <option value="age">Sort: oldest first</option>
+    </select>
+    <span id="count" class="count"></span>
+  </div>
+  <table>
+    <thead><tr>
+      <th>#</th><th>Protocol</th><th>Category</th><th>Chains</th>
+      <th class="num">TVL</th><th class="num">7d</th><th class="num">Implied value</th><th></th>
+    </tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <p class="hint">Click a row for its detail view and farm plan. “Records no token” means the
+  snapshot carries no token for it — not proof that it has none.</p>
+</section>
+
+<section id="view-live" hidden>
+  <p class="intro">The market's own yardstick: the live-token protocols whose market-cap-to-TVL
+  ratios price every implied value on the board. They never rank — they calibrate.</p>
+  <table>
+    <thead><tr>
+      <th>Protocol</th><th>Category</th>
+      <th class="num">TVL</th><th class="num">Market cap</th><th class="num">Mcap / TVL</th>
+    </tr></thead>
+    <tbody id="live-rows"></tbody>
+  </table>
+</section>
+
+<section id="view-method" hidden>
+  <h2>How the radar prices a launch</h2>
+  <p>Implied value = TVL × category multiple × growth × maturity × breadth.</p>
+  <ul>
+    <li><b>Category multiple:</b> the median market-cap-to-TVL ratio of the protocols in
+    that category whose token already trades; the global median when a category has none.
+    Each live ratio is capped at 10× first, so one thin-TVL protocol cannot price a
+    whole category.</li>
+    <li><b>Growth:</b> the protocol's 7-day TVL change, clamped to −40%…+120%, weighted 0.35.</li>
+    <li><b>Maturity:</b> 0.80 for a brand-new listing, rising to 1.20 after four years tracked
+    with no token; 0.85 when no listing date is recorded.</li>
+    <li><b>Breadth:</b> +3% per extra chain, up to five.</li>
+  </ul>
+  <p>A protocol counts as pre-token when the snapshot records no market cap, no CoinGecko
+  id and no symbol for it, and it is not a versioned, wrapped, staked or bridged product
+  of a token that already trades. The board holds every such protocol — the 40 on the
+  house watchlist are the floor, never the ceiling.</p>
+  <p>Every row carries a five-step farm plan with what each step costs and how long it
+  takes. An implied value is this board's own claim about what a launch would be worth
+  if the protocol's record stayed as it is. It is not a prediction that a token will be
+  issued, and not financial advice.</p>
+</section>
+
+<aside id="drawer" hidden>
+  <button id="close" aria-label="Close">×</button>
+  <div id="detail"></div>
+</aside>
+
+<script src="../data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
