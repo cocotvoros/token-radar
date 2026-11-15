@@ -26,6 +26,9 @@
   function recompute(r) {
     return Math.max(1, Math.round(r.tvl_usd * r.multiple * r.growth_factor * r.maturity_factor * r.breadth_factor));
   }
+  function verdictClass(v) {
+    return v === 'FARM' ? 'farm' : (v === 'WATCH' ? 'watch' : 'skip');
+  }
 
   var params = new URLSearchParams(location.search);
   var qEl = document.getElementById('q');
@@ -38,6 +41,36 @@
 
   document.getElementById('meta').textContent =
     D.rows.length + ' protocols ranked\nSnapshot ' + D.as_of + ' · floor ' + money(D.floor_usd);
+
+  // KPI strip: the numbers a reader should see before a single row.
+  var top = D.rows[0];
+  document.getElementById('kpi-ranked').textContent = D.rows.length;
+  document.getElementById('kpi-ranked-sub').textContent = 'of ' + D.universe.total + ' in the snapshot';
+  document.getElementById('kpi-watch').textContent = D.rows.filter(function (r) { return r.watchlist; }).length + ' / 40';
+  document.getElementById('kpi-top').textContent = money(top.implied_value_usd);
+  document.getElementById('kpi-top-sub').textContent = 'rank 1 · ' + top.name;
+  document.getElementById('kpi-multiple').textContent = D.global_multiple.toFixed(2) + '×';
+  document.getElementById('kpi-miss').textContent = '×' + D.validation.typical_miss_factor.toFixed(1);
+  document.getElementById('kpi-miss-sub').textContent = 'typical miss, ' + D.validation.holdout_n + ' held out';
+
+  var v = D.validation;
+  var validText = 'Out of sample: fitted on ' + v.fit_n + ' live-token protocols, tested on the other ' +
+    v.holdout_n + '. Typical miss ×' + v.typical_miss_factor.toFixed(2) +
+    ' (median |log error| ' + v.median_abs_log_error.toFixed(2) + '); ' + v.within_2x + ' of ' +
+    v.holdout_n + ' within 2×; rank correlation (Spearman) ' + v.spearman.toFixed(2) +
+    '. ' + v.recompute_match + '.';
+  document.getElementById('valid-panel').textContent = validText;
+  document.getElementById('method-valid').textContent = validText +
+    ' The model orders launches better than it prices them, so read ranks first and values second.';
+
+  var u = D.universe;
+  var reasons = Object.keys(u.set_aside_reasons).sort().map(function (k) {
+    return u.set_aside_reasons[k] + ' ' + k;
+  }).join(' · ');
+  var universeText = 'Universe: ' + u.total + ' protocols = ' + u.ranked + ' ranked + ' +
+    u.set_aside + ' set aside (' + reasons + ') + ' + u.already_trading + ' already trading. Nothing is dropped silently.';
+  document.getElementById('universe-line').textContent = universeText;
+  document.getElementById('method-universe').textContent = universeText;
 
   var cats = {}, chains = {};
   D.rows.forEach(function (r) {
@@ -89,6 +122,8 @@
         '<td class="num">' + money(r.tvl_usd) + '</td>' +
         '<td class="num ' + cls + '">' + chg + '</td>' +
         '<td class="num"><b>' + money(recompute(r)) + '</b></td>' +
+        '<td class="num range">' + money(r.implied_low_usd) + ' – ' + money(r.implied_high_usd) + '</td>' +
+        '<td><span class="verdict ' + verdictClass(r.verdict) + '">' + r.verdict + '</span></td>' +
         '<td>›</td>';
       tr.querySelector('b').textContent = r.name;
       tr.addEventListener('click', function () { openDetail(r.slug); });
@@ -107,18 +142,21 @@
     d.innerHTML =
       '<h2></h2><p>' + (r.category || 'No category') + ' · ' + r.chains.join(', ') + '</p>' +
       '<div class="big">' + money(recompute(r)) + ' implied</div>' +
+      '<div class="rangebar"><span>Range ' + money(r.implied_low_usd) + ' – ' + money(r.implied_high_usd) + '</span>' +
+      '<span class="verdict ' + verdictClass(r.verdict) + '">' + r.verdict + '</span></div>' +
       '<dl>' +
       '<dt>Rank</dt><dd>#' + r.rank + ' of ' + D.rows.length + '</dd>' +
       '<dt>TVL</dt><dd>' + money(r.tvl_usd) + '</dd>' +
       '<dt>7-day change</dt><dd>' + pct(r.change_7d) + '</dd>' +
       '<dt>Tracked since</dt><dd>' + (r.listed_at || 'unknown') + ' (' + age(r.listed_at) + ')</dd>' +
-      '<dt>Category multiple</dt><dd>' + r.multiple.toFixed(3) + '×</dd>' +
+      '<dt>Category multiple</dt><dd>' + r.multiple.toFixed(3) + '× (raw median ' + r.multiple_raw.toFixed(3) +
+      '×, shrunk from ' + r.comparables_n + ' live comparables)</dd>' +
       '<dt>Growth factor</dt><dd>' + r.growth_factor.toFixed(3) + '×</dd>' +
       '<dt>Maturity factor</dt><dd>' + r.maturity_factor.toFixed(3) + '×</dd>' +
       '<dt>Breadth factor</dt><dd>' + r.breadth_factor.toFixed(3) + '×</dd>' +
       '</dl>' +
       '<p class="recalc">Recomputed in this page: TVL × multiple × growth × maturity × breadth = ' +
-      money(recompute(r)) + ' (board: ' + money(r.implied_value_usd) + ').</p>' +
+      money(recompute(r)) + ' (board: ' + money(r.implied_value_usd) + '). ' + v.recompute_match + '.</p>' +
       '<h3>How to farm it</h3><ol>' + steps + '</ol>' +
       '<p class="recalc">Records no token in the snapshot — not proof it has none. ' +
       'Implied value is this board\u2019s own claim, not a prediction of a launch.</p>';

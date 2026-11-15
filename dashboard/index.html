@@ -15,6 +15,18 @@
   <div class="meta" id="meta">Loading…</div>
 </header>
 
+<section class="kpi" id="kpi">
+  <div class="tile"><span class="klabel">Ranked</span><b id="kpi-ranked">—</b><span class="ksub" id="kpi-ranked-sub">of the snapshot</span></div>
+  <div class="tile"><span class="klabel">Watchlist</span><b id="kpi-watch">—</b><span class="ksub">house floor, covered</span></div>
+  <div class="tile"><span class="klabel">Top implied value</span><b id="kpi-top">—</b><span class="ksub" id="kpi-top-sub">rank 1</span></div>
+  <div class="tile"><span class="klabel">Global multiple</span><b id="kpi-multiple">—</b><span class="ksub">median mcap / TVL, live tokens</span></div>
+  <div class="tile"><span class="klabel">Out-of-sample miss</span><b id="kpi-miss">—</b><span class="ksub" id="kpi-miss-sub">holdout, see Method</span></div>
+</section>
+
+<p class="formula">Implied value = TVL × category multiple (shrunk toward the global median) × growth × maturity × breadth. Every row also shows its low–high range and a FARM / WATCH / SKIP verdict.</p>
+<p class="valid" id="valid-panel">Validation loading…</p>
+<p class="universe" id="universe-line"></p>
+
 <nav class="tabs">
   <button id="tab-board" class="active">Board</button>
   <button id="tab-live">Live comparables</button>
@@ -39,12 +51,14 @@
   <table>
     <thead><tr>
       <th>#</th><th>Protocol</th><th>Category</th><th>Chains</th>
-      <th class="num">TVL</th><th class="num">7d</th><th class="num">Implied value</th><th></th>
+      <th class="num">TVL</th><th class="num">7d</th><th class="num">Implied value</th><th class="num">Range</th><th>Verdict</th><th></th>
     </tr></thead>
     <tbody id="rows"></tbody>
   </table>
   <p class="hint">Click a row for its detail view and farm plan. “Records no token” means the
-  snapshot carries no token for it — not proof that it has none.</p>
+  snapshot carries no token for it — not proof that it has none. FARM means even the low
+  end of the range clears the $50M floor; WATCH means only the point estimate does; SKIP
+  means neither does. Read ranks first: the model orders launches better than it prices them.</p>
 </section>
 
 <section id="view-live" hidden>
@@ -64,19 +78,28 @@
   <p>Implied value = TVL × category multiple × growth × maturity × breadth.</p>
   <ul>
     <li><b>Category multiple:</b> the median market-cap-to-TVL ratio of the protocols in
-    that category whose token already trades; the global median when a category has none.
-    Each live ratio is capped at 10× first, so one thin-TVL protocol cannot price a
-    whole category.</li>
+    that category whose token already trades, shrunk toward the global median:
+    (n × category median + 3 × global median) / (n + 3), so a category priced by one
+    or two thin protocols cannot set its own price. Each live ratio is capped at 10×
+    first; the global median is used when a category has no live protocol.</li>
+    <li><b>Range:</b> the same formula with the category's first and third quartiles of
+    capped live ratios, so every row shows a low–high range instead of false precision.</li>
+    <li><b>Verdict:</b> FARM when even the low end clears the $50M floor, WATCH when only
+    the point estimate clears it, SKIP otherwise.</li>
     <li><b>Growth:</b> the protocol's 7-day TVL change, clamped to −40%…+120%, weighted 0.35.</li>
     <li><b>Maturity:</b> 0.80 for a brand-new listing, rising to 1.20 after four years tracked
     with no token; 0.85 when no listing date is recorded.</li>
     <li><b>Breadth:</b> +3% per extra chain, up to five.</li>
   </ul>
+  <h2>Out-of-sample validation</h2>
+  <p id="method-valid">Validation loading…</p>
+  <h2>The whole snapshot, accounted for</h2>
+  <p id="method-universe"></p>
   <p>A protocol counts as pre-token when the snapshot records no market cap, no CoinGecko
   id and no symbol for it, and it is not a versioned, wrapped, staked or bridged product
   of a token that already trades. The board holds every such protocol — the 40 on the
   house watchlist are the floor, never the ceiling.</p>
-  <p>Every row carries a five-step farm plan with what each step costs and how long it
+  <p>Every row carries a five-step farm plan, written for its own category, with what each step costs and how long it
   takes. An implied value is this board's own claim about what a launch would be worth
   if the protocol's record stayed as it is. It is not a prediction that a token will be
   issued, and not financial advice.</p>

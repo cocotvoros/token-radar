@@ -59,6 +59,8 @@ const boardDoc = {
   row_count: board.length,
   watchlist_covered: snapshot.watchlist.length,
   comparables: radar.comparables.length,
+  universe: radar.universe,
+  validation: radar.validation,
   rows: board,
 };
 writeFileSync(join(out, 'board.json'), JSON.stringify(boardDoc, null, 2) + '\n');
@@ -71,5 +73,7 @@ const dossierBytes = statSync(join(out, 'dossier.json')).size;
 process.stdout.write(
   `pulse radar: ${board.length} rows, ${radar.comparables.length} comparables, ` +
   `top ${board[0]!.slug} at $${board[0]!.implied_value_usd.toLocaleString('en-US')}, ` +
-  `dossier ${dossierBytes} bytes\n`,
+  `universe ${radar.universe.ranked}+${radar.universe.set_aside}+${radar.universe.already_trading}=${radar.universe.total}, ` +
+  `holdout typical miss x${radar.validation.typical_miss_factor.toFixed(2)}, spearman ${radar.validation.spearman.toFixed(2)}, ` +
+  `${radar.validation.recompute_match}, dossier ${dossierBytes} bytes\n`,
 );
