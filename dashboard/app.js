@@ -1,4 +1,4 @@
-// Pulse Radar dashboard: board, filters, sorting, detail drawer, live comparables.
+// Pulse Radar dashboard: board, scatter, filters, sorting, detail drawer, live comparables.
 // Reads window.PULSE_RADAR (written by main.ts) and recomputes every implied
 // value in the page from the same factors, so board and code visibly agree.
 (function () {
@@ -10,6 +10,10 @@
     if (n >= 1e6) return '$' + (n / 1e6).toFixed(1) + 'M';
     if (n >= 1e3) return '$' + (n / 1e3).toFixed(0) + 'K';
     return '$' + Math.round(n);
+  }
+  function dollars(n) {
+    var sign = n < 0 ? '-$' : '$';
+    return sign + Math.abs(n).toFixed(2);
   }
   function pct(v) {
     if (v === null || v === undefined) return '—';
@@ -27,7 +31,7 @@
     return Math.max(1, Math.round(r.tvl_usd * r.multiple * r.growth_factor * r.maturity_factor * r.breadth_factor));
   }
   function verdictClass(v) {
-    return v === 'FARM' ? 'farm' : (v === 'WATCH' ? 'watch' : 'skip');
+    return v === 'FARM' ? 'farm' : (v === 'THIN' ? 'thin' : 'skip');
   }
 
   var params = new URLSearchParams(location.search);
@@ -50,18 +54,30 @@
   document.getElementById('kpi-top').textContent = money(top.implied_value_usd);
   document.getElementById('kpi-top-sub').textContent = 'rank 1 · ' + top.name;
   document.getElementById('kpi-multiple').textContent = D.global_multiple.toFixed(2) + '×';
-  document.getElementById('kpi-miss').textContent = '×' + D.validation.typical_miss_factor.toFixed(1);
-  document.getElementById('kpi-miss-sub').textContent = 'typical miss, ' + D.validation.holdout_n + ' held out';
+  document.getElementById('kpi-miss').textContent = '×' + D.loo.chosen.typical_miss_factor.toFixed(1);
+  document.getElementById('kpi-miss-sub').textContent = 'typical miss, leave-one-out';
 
   var v = D.validation;
-  var validText = 'Out of sample: fitted on ' + v.fit_n + ' live-token protocols, tested on the other ' +
-    v.holdout_n + '. Typical miss ×' + v.typical_miss_factor.toFixed(2) +
-    ' (median |log error| ' + v.median_abs_log_error.toFixed(2) + '); ' + v.within_2x + ' of ' +
-    v.holdout_n + ' within 2×; rank correlation (Spearman) ' + v.spearman.toFixed(2) +
+  var loo = D.loo;
+  var validText = 'Out of sample, two ways. Split-half: fitted on ' + v.fit_n + ' live-token protocols, tested on the other ' +
+    v.holdout_n + ' — typical miss ×' + v.typical_miss_factor.toFixed(2) + ', Spearman ' + v.spearman.toFixed(2) + '. ' +
+    'Leave-one-out over all ' + loo.n + ' (k=' + loo.chosen_k + '): typical miss ×' + loo.chosen.typical_miss_factor.toFixed(2) +
+    ', ' + loo.chosen.within_2x + ' of ' + loo.n + ' within 2×, Spearman ' + loo.chosen.spearman.toFixed(2) +
     '. ' + v.recompute_match + '.';
   document.getElementById('valid-panel').textContent = validText;
   document.getElementById('method-valid').textContent = validText +
     ' The model orders launches better than it prices them, so read ranks first and values second.';
+  document.getElementById('method-loo').textContent =
+    'Each live-token protocol is predicted by category medians fit without it, once per shrinkage k. ' +
+    'k is the smallest grid value whose Spearman sits within 0.01 of the grid best — here k=' + loo.chosen_k + '.';
+  var gridHtml = '<table class="grid"><thead><tr><th>k</th><th>Typical miss</th><th>Within 2×</th><th>Spearman</th><th></th></tr></thead><tbody>';
+  loo.grid.forEach(function (g) {
+    gridHtml += '<tr' + (g.k === loo.chosen_k ? ' class="chosen"' : '') + '><td>' + g.k + '</td><td>×' +
+      g.typical_miss_factor.toFixed(2) + '</td><td>' + g.within_2x + ' / ' + loo.n + '</td><td>' +
+      g.spearman.toFixed(3) + '</td><td>' + (g.k === loo.chosen_k ? 'chosen' : '') + '</td></tr>';
+  });
+  gridHtml += '</tbody></table>';
+  document.getElementById('loo-grid').innerHTML = gridHtml;
 
   var u = D.universe;
   var reasons = Object.keys(u.set_aside_reasons).sort().map(function (k) {
@@ -71,6 +87,52 @@
     u.set_aside + ' set aside (' + reasons + ') + ' + u.already_trading + ' already trading. Nothing is dropped silently.';
   document.getElementById('universe-line').textContent = universeText;
   document.getElementById('method-universe').textContent = universeText;
+
+  // Scatter: live tokens (grey), the fitted size curve (line), the board's top 10 (gold).
+  (function scatter() {
+    var el = document.getElementById('scatter');
+    var W = 1336, H = 250, padL = 64, padR = 12, padT = 10, padB = 30;
+    var pts = D.live_points;
+    var top10 = D.rows.slice(0, 10);
+    var allX = pts.map(function (p) { return p.tvl_usd; }).concat(top10.map(function (r) { return r.tvl_usd; }));
+    var allY = pts.map(function (p) { return p.mcap_usd; }).concat(top10.map(function (r) { return r.implied_value_usd; }));
+    var xMin = Math.log10(Math.min.apply(null, allX)), xMax = Math.log10(Math.max.apply(null, allX));
+    var yMin = Math.log10(Math.min.apply(null, allY)), yMax = Math.log10(Math.max.apply(null, allY));
+    function X(tvl) { return padL + (Math.log10(tvl) - xMin) / (xMax - xMin) * (W - padL - padR); }
+    function Y(val) { return H - padB - (Math.log10(val) - yMin) / (yMax - yMin) * (H - padT - padB); }
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="Scatter of TVL against market cap">';
+    for (var e = Math.ceil(yMin); e <= Math.floor(yMax); e++) {
+      var val = Math.pow(10, e);
+      s += '<line x1="' + padL + '" y1="' + Y(val) + '" x2="' + (W - padR) + '" y2="' + Y(val) + '" class="sgrid"/>' +
+        '<text x="' + (padL - 6) + '" y="' + (Y(val) + 4) + '" class="slabel" text-anchor="end">' + money(val) + '</text>';
+    }
+    for (var ex = Math.ceil(xMin); ex <= Math.floor(xMax); ex++) {
+      var xv = Math.pow(10, ex);
+      s += '<text x="' + X(xv) + '" y="' + (H - 8) + '" class="slabel" text-anchor="middle">' + money(xv) + '</text>';
+    }
+    s += '<text x="' + (padL + 4) + '" y="' + (padT + 10) + '" class="slabel">market cap →</text>';
+    var path = '';
+    for (var i = 0; i <= 40; i++) {
+      var lx = xMin + (xMax - xMin) * i / 40;
+      var tvl = Math.pow(10, lx);
+      var fit = Math.exp(D.curve.a + D.curve.b * Math.log(tvl));
+      path += (i === 0 ? 'M' : 'L') + X(tvl).toFixed(1) + ' ' + Y(fit).toFixed(1) + ' ';
+    }
+    s += '<path d="' + path + '" class="scurve"/>';
+    pts.forEach(function (p) {
+      s += '<circle cx="' + X(p.tvl_usd).toFixed(1) + '" cy="' + Y(p.mcap_usd).toFixed(1) + '" r="3" class="slive"><title>' + p.slug + '</title></circle>';
+    });
+    top10.forEach(function (r) {
+      s += '<circle cx="' + X(r.tvl_usd).toFixed(1) + '" cy="' + Y(r.implied_value_usd).toFixed(1) + '" r="4.5" class="stop"><title>' + r.slug + ' (implied)</title></circle>';
+    });
+    s += '</svg>';
+    el.innerHTML = s;
+    document.getElementById('scatter-note').textContent =
+      'Each grey dot is one of the ' + D.curve.n + ' live-token protocols (TVL vs market cap, log–log). The line is the fitted size curve, ' +
+      'log(mcap) = ' + D.curve.a.toFixed(2) + ' + ' + D.curve.b.toFixed(2) + ' × log(TVL), R² ' + D.curve.r2.toFixed(2) +
+      ' — TVL alone leaves most of the variance unexplained, so the curve is a cross-check, never the price. ' +
+      'Gold dots are the board\u2019s top 10 implied values on the same axes.';
+  })();
 
   var cats = {}, chains = {};
   D.rows.forEach(function (r) {
@@ -123,6 +185,7 @@
         '<td class="num ' + cls + '">' + chg + '</td>' +
         '<td class="num"><b>' + money(recompute(r)) + '</b></td>' +
         '<td class="num range">' + money(r.implied_low_usd) + ' – ' + money(r.implied_high_usd) + '</td>' +
+        '<td class="num">' + dollars(r.airdrop_per_1k_usd) + '</td>' +
         '<td><span class="verdict ' + verdictClass(r.verdict) + '">' + r.verdict + '</span></td>' +
         '<td>›</td>';
       tr.querySelector('b').textContent = r.name;
@@ -151,9 +214,13 @@
       '<dt>Tracked since</dt><dd>' + (r.listed_at || 'unknown') + ' (' + age(r.listed_at) + ')</dd>' +
       '<dt>Category multiple</dt><dd>' + r.multiple.toFixed(3) + '× (raw median ' + r.multiple_raw.toFixed(3) +
       '×, shrunk from ' + r.comparables_n + ' live comparables)</dd>' +
+      '<dt>Size curve says</dt><dd>' + money(r.curve_value_usd) + ' (cross-check only)</dd>' +
       '<dt>Growth factor</dt><dd>' + r.growth_factor.toFixed(3) + '×</dd>' +
       '<dt>Maturity factor</dt><dd>' + r.maturity_factor.toFixed(3) + '×</dd>' +
       '<dt>Breadth factor</dt><dd>' + r.breadth_factor.toFixed(3) + '×</dd>' +
+      '<dt>Farm cost, $1K / 4wk</dt><dd>' + dollars(r.farm_cost_usd) + '</dd>' +
+      '<dt>Expected airdrop / $1K</dt><dd>' + dollars(r.airdrop_per_1k_usd) + ' (5% share, pro-rata)</dd>' +
+      '<dt>Net per $1K</dt><dd>' + dollars(r.net_usd) + ' (at the low end: ' + dollars(r.net_low_usd) + ')</dd>' +
       '</dl>' +
       '<p class="recalc">Recomputed in this page: TVL × multiple × growth × maturity × breadth = ' +
       money(recompute(r)) + ' (board: ' + money(r.implied_value_usd) + '). ' + v.recompute_match + '.</p>' +

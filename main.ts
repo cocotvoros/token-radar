@@ -61,6 +61,8 @@ const boardDoc = {
   comparables: radar.comparables.length,
   universe: radar.universe,
   validation: radar.validation,
+  loo: radar.loo,
+  curve: radar.curve,
   rows: board,
 };
 writeFileSync(join(out, 'board.json'), JSON.stringify(boardDoc, null, 2) + '\n');
@@ -75,5 +77,6 @@ process.stdout.write(
   `top ${board[0]!.slug} at $${board[0]!.implied_value_usd.toLocaleString('en-US')}, ` +
   `universe ${radar.universe.ranked}+${radar.universe.set_aside}+${radar.universe.already_trading}=${radar.universe.total}, ` +
   `holdout typical miss x${radar.validation.typical_miss_factor.toFixed(2)}, spearman ${radar.validation.spearman.toFixed(2)}, ` +
+  `LOO k=${radar.loo.chosen_k} spearman ${radar.loo.chosen.spearman.toFixed(2)}, curve R2 ${radar.curve.r2.toFixed(2)}, ` +
   `${radar.validation.recompute_match}, dossier ${dossierBytes} bytes\n`,
 );

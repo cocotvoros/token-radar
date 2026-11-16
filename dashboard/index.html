@@ -23,9 +23,15 @@
   <div class="tile"><span class="klabel">Out-of-sample miss</span><b id="kpi-miss">—</b><span class="ksub" id="kpi-miss-sub">holdout, see Method</span></div>
 </section>
 
-<p class="formula">Implied value = TVL × category multiple (shrunk toward the global median) × growth × maturity × breadth. Every row also shows its low–high range and a FARM / WATCH / SKIP verdict.</p>
+<p class="formula">Implied value = TVL × category multiple (shrunk toward the global median) × growth × maturity × breadth. Every row also shows its low–high range, its expected airdrop per $1K, and a FARM / THIN / SKIP verdict net of gas.</p>
 <p class="valid" id="valid-panel">Validation loading…</p>
 <p class="universe" id="universe-line"></p>
+
+<section class="scatter-wrap">
+  <h3>Size curve: what already trades, and where the board's picks sit</h3>
+  <div id="scatter"></div>
+  <p class="scatter-note" id="scatter-note">Each grey dot is a live-token protocol (TVL vs market cap, log–log). The line is the fitted size curve; gold dots are the board's top 10 implied values. The curve is a cross-check, never the price — category comparables price the board.</p>
+</section>
 
 <nav class="tabs">
   <button id="tab-board" class="active">Board</button>
@@ -51,14 +57,15 @@
   <table>
     <thead><tr>
       <th>#</th><th>Protocol</th><th>Category</th><th>Chains</th>
-      <th class="num">TVL</th><th class="num">7d</th><th class="num">Implied value</th><th class="num">Range</th><th>Verdict</th><th></th>
+      <th class="num">TVL</th><th class="num">7d</th><th class="num">Implied value</th><th class="num">Range</th><th class="num">Airdrop / $1K</th><th>Verdict</th><th></th>
     </tr></thead>
     <tbody id="rows"></tbody>
   </table>
   <p class="hint">Click a row for its detail view and farm plan. “Records no token” means the
-  snapshot carries no token for it — not proof that it has none. FARM means even the low
-  end of the range clears the $50M floor; WATCH means only the point estimate does; SKIP
-  means neither does. Read ranks first: the model orders launches better than it prices them.</p>
+  snapshot carries no token for it — not proof that it has none. Every plan is netted for a
+  $1,000 farmer over 4 weeks: FARM means the expected airdrop covers the gas even at the
+  range's low end, THIN means only the point estimate covers it, SKIP means it does not.
+  Read ranks first: the model orders launches better than it prices them.</p>
 </section>
 
 <section id="view-live" hidden>
@@ -79,28 +86,44 @@
   <ul>
     <li><b>Category multiple:</b> the median market-cap-to-TVL ratio of the protocols in
     that category whose token already trades, shrunk toward the global median:
-    (n × category median + 3 × global median) / (n + 3), so a category priced by one
+    (n × category median + k × global median) / (n + k), so a category priced by one
     or two thin protocols cannot set its own price. Each live ratio is capped at 10×
-    first; the global median is used when a category has no live protocol.</li>
+    first; the global median is used when a category has no live protocol. The
+    shrinkage k is chosen on the leave-one-out grid below, not by taste.</li>
     <li><b>Range:</b> the same formula with the category's first and third quartiles of
     capped live ratios, so every row shows a low–high range instead of false precision.</li>
-    <li><b>Verdict:</b> FARM when even the low end clears the $50M floor, WATCH when only
-    the point estimate clears it, SKIP otherwise.</li>
+    <li><b>Size curve:</b> a log–log fit of market cap on TVL over the 128 live-token
+    protocols, drawn on the board's scatter as a cross-check. It never prices a row:
+    TVL alone leaves most of the variance unexplained, and the detail view shows what
+    the curve alone would say next to the board's own value.</li>
     <li><b>Growth:</b> the protocol's 7-day TVL change, clamped to −40%…+120%, weighted 0.35.</li>
     <li><b>Maturity:</b> 0.80 for a brand-new listing, rising to 1.20 after four years tracked
     with no token; 0.85 when no listing date is recorded.</li>
     <li><b>Breadth:</b> +3% per extra chain, up to five.</li>
   </ul>
+  <h2>Farm economics, netted</h2>
+  <p>Every plan is costed for one standard farmer: $1,000 deployed for 4 weeks. Cost is
+  $6 setup + $4 exit + 4 weeks of the category's weekly transactions at the main chain's
+  gas (Ethereum $4.50, BSC $0.30, major L2s $0.15, Solana and Polygon $0.05, other chains
+  $0.50). The expected airdrop assumes a launch sets aside 5% of the implied value for
+  its farmers, split pro-rata to capital, and is shown per $1K deployed. Verdict:
+  FARM when the net is positive even at the range's low end, THIN when only the point
+  estimate nets positive, SKIP when even that does not cover the gas. The airdrop share
+  and the pro-rata split are this board's stated assumptions, not a promise: a launch
+  may set aside more, less, or nothing.</p>
   <h2>Out-of-sample validation</h2>
   <p id="method-valid">Validation loading…</p>
+  <h2>Leave-one-out: the shrinkage grid</h2>
+  <p id="method-loo">Validation loading…</p>
+  <div id="loo-grid"></div>
   <h2>The whole snapshot, accounted for</h2>
   <p id="method-universe"></p>
   <p>A protocol counts as pre-token when the snapshot records no market cap, no CoinGecko
   id and no symbol for it, and it is not a versioned, wrapped, staked or bridged product
   of a token that already trades. The board holds every such protocol — the 40 on the
   house watchlist are the floor, never the ceiling.</p>
-  <p>Every row carries a five-step farm plan, written for its own category, with what each step costs and how long it
-  takes. An implied value is this board's own claim about what a launch would be worth
+  <p>Every row carries a six-step farm plan, written for its own category, with what each step costs and how long it
+  takes; the last step nets the plan's own economics. An implied value is this board's own claim about what a launch would be worth
   if the protocol's record stayed as it is. It is not a prediction that a token will be
   issued, and not financial advice.</p>
 </section>

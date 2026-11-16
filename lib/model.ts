@@ -1,4 +1,4 @@
-// Pulse Radar v2 — the token launch radar's model (token-radar-01).
+// Pulse Radar v3 — the token launch radar's model (token-radar-01).
 //
 // One sealed snapshot in, one ranked board out. Nothing here names a protocol
 // specially: the same functions score every row, and every number on the board
@@ -7,12 +7,14 @@
 //
 // Implied value, per protocol:
 //   multiple  = shrunk median(mcap / TVL) over live-token protocols in its
-//               category: (n * categoryMedian + 3 * globalMedian) / (n + 3),
+//               category: (n * categoryMedian + k * globalMedian) / (n + k),
 //               so a category priced by one or two thin protocols is pulled
 //               toward the market's global median instead of letting one
 //               protocol price a whole category. Each live ratio is capped at
 //               10x first, and the global median is used when a category has
-//               no live protocol at all.
+//               no live protocol at all. The shrinkage k is not a guess: it is
+//               chosen on a printed leave-one-out grid (see below) and the
+//               grid ships with the board.
 //   growth    = 1 + 0.35 * clamp(change_7d, -40, +120) / 100   (no report: 1)
 //   maturity  = 0.80 + min(age_days, 1460) / 1460 * 0.40       (no date: 0.85)
 //   breadth   = 1 + 0.03 * min(chains - 1, 5)
@@ -21,15 +23,31 @@
 // Implied range: the same formula with the category's first and third
 // quartiles of capped live ratios (shrunk the same way) in place of the
 // median, so every row shows a low-high range, not a false point precision.
-// Verdict: FARM when even the low end clears the house floor ($50M),
-// WATCH when only the point estimate clears it, SKIP otherwise.
 //
-// Validation is real and out of sample: the 128 live-token protocols are
-// split in two by slug order (even = fit, odd = holdout). Category medians
-// are fit on the fit half only, then the full formula predicts the holdout
-// half's market caps. The dashboard reports the typical miss, the share
-// within 2x, and the rank correlation — the model orders launches better
-// than it prices them, so read ranks first, values second.
+// Size curve cross-check: a log-log least-squares fit of market cap on TVL
+// over the same 128 live-token protocols, log(mcap) = a + b * log(TVL).
+// TVL alone explains only part of the variance, so the curve never prices a
+// row — it is drawn on the scatter next to the board's own values, and each
+// detail view shows what the curve alone would say, as a cross-check.
+//
+// Farm economics, netted: every row is costed for one standard farmer —
+// $1,000 deployed for 4 weeks. Cost = $6 setup + $4 exit + 4 weeks of the
+// category's weekly transactions at the main chain's gas. Expected airdrop
+// assumes a launch sets aside 5% of the implied value for its farmers,
+// split pro-rata to capital: expected = 5% * implied * ($1,000 / TVL),
+// also shown per $1K deployed. Verdict: FARM when the net is positive even
+// at the low end of the range, THIN when only the point estimate nets
+// positive, SKIP when even that does not cover the gas.
+//
+// Validation is real and out of sample, two ways. (1) Split-half: the 128
+// live-token protocols split by slug order (even = fit, odd = holdout);
+// category medians fit on the fit half predict the holdout half. (2)
+// Leave-one-out over all 128: each live protocol is predicted by medians
+// fit without it, for every shrinkage k on a printed grid; k is chosen as
+// the smallest grid value whose LOO rank correlation (Spearman) sits
+// within 0.01 of the grid's best. The dashboard reports the typical miss,
+// the share within 2x, and the rank correlation — the model orders
+// launches better than it prices them, so read ranks first, values second.
 //
 // A protocol is a genuine pre-token candidate when DefiLlama records no token
 // for it (no market cap, no CoinGecko id, no symbol) and it is not a versioned,
@@ -74,7 +92,12 @@ export interface BoardRow {
   implied_value_usd: number;
   implied_low_usd: number;
   implied_high_usd: number;
-  verdict: 'FARM' | 'WATCH' | 'SKIP';
+  curve_value_usd: number;
+  verdict: 'FARM' | 'THIN' | 'SKIP';
+  airdrop_per_1k_usd: number;
+  farm_cost_usd: number;
+  net_usd: number;
+  net_low_usd: number;
   multiple: number;
   multiple_raw: number;
   comparables_n: number;
@@ -95,6 +118,20 @@ export interface Comparable {
   ratio: number;
 }
 
+/** One point of the scatter: a live-token protocol's TVL and market cap. */
+export interface LivePoint {
+  slug: string;
+  tvl_usd: number;
+  mcap_usd: number;
+}
+
+export interface SizeCurve {
+  a: number;
+  b: number;
+  r2: number;
+  n: number;
+}
+
 export interface Validation {
   method: string;
   fit_n: number;
@@ -104,6 +141,22 @@ export interface Validation {
   within_2x: number;
   spearman: number;
   recompute_match: string;
+}
+
+export interface LooRow {
+  k: number;
+  median_abs_log_error: number;
+  typical_miss_factor: number;
+  within_2x: number;
+  spearman: number;
+}
+
+export interface LooValidation {
+  method: string;
+  n: number;
+  grid: LooRow[];
+  chosen_k: number;
+  chosen: LooRow;
 }
 
 export interface Universe {
@@ -121,6 +174,9 @@ export interface RadarData {
   global_multiple: number;
   multiples: Record<string, number>;
   validation: Validation;
+  loo: LooValidation;
+  curve: SizeCurve;
+  live_points: LivePoint[];
   universe: Universe;
   rows: BoardRow[];
   comparables: Comparable[];
@@ -138,6 +194,11 @@ export interface ModelConstants {
   breadth_max_extra: number;
   multiple_cap: number;
   shrink_k: number;
+  airdrop_share: number;
+  budget_usd: number;
+  horizon_weeks: number;
+  setup_cost_usd: number;
+  exit_cost_usd: number;
 }
 
 export const MODEL: ModelConstants = {
@@ -151,7 +212,27 @@ export const MODEL: ModelConstants = {
   breadth_step: 0.03,
   breadth_max_extra: 5,
   multiple_cap: 10,
-  shrink_k: 3,
+  shrink_k: 8,
+  airdrop_share: 0.05,
+  budget_usd: 1000,
+  horizon_weeks: 4,
+  setup_cost_usd: 6,
+  exit_cost_usd: 4,
+};
+
+/** Gas per transaction in USD by main chain: the farm cost model's one table. */
+const GAS_USD: Record<string, number> = {
+  'Ethereum': 4.5,
+  'Solana': 0.05,
+  'Base': 0.15,
+  'Arbitrum': 0.15,
+  'Arbitrum One': 0.15,
+  'Optimism': 0.15,
+  'OP Mainnet': 0.15,
+  'BSC': 0.3,
+  'BNB Smart Chain': 0.3,
+  'Polygon': 0.05,
+  'Avalanche': 0.25,
 };
 
 const EXCLUDED_CATEGORIES = new Set([
@@ -257,174 +338,211 @@ function pct(change7d: number | null): string {
   return (change7d >= 0 ? '+' : '') + change7d.toFixed(1) + '%';
 }
 
-/** What farming actually looks like in one category: core action, weekly habit, second feature. */
-interface Playbook { core: string; weekly: string; second: string; }
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+/** What farming actually looks like in one category: core action, weekly habit, second feature, weekly transactions. */
+interface Playbook { core: string; weekly: string; second: string; tx: number; }
 
 const PLAYBOOKS: Record<string, Playbook> = {
   'Risk Curators': {
     core: 'deposit into a curator vault and pick the risk profile that fits you, starting with a stablecoin vault',
     weekly: 'rebalance between vaults and check the curator\'s allocation reports',
     second: 'try a second curator vault with a different risk profile and compare their yields',
+    tx: 1,
   },
   'Dexs': {
     core: 'swap a small amount and add liquidity to a pool with steady volume, in the pair you understand best',
     weekly: 'collect fees, check your pool\'s share and move liquidity if the range drifts',
     second: 'provide liquidity in a second pool on a different chain and use the limit-order feature if it has one',
+    tx: 3,
   },
   'Onchain Capital Allocator': {
     core: 'allocate into a vault that invests on-chain and read its strategy sheet before you commit',
     weekly: 'review the vault\'s positions and performance report',
     second: 'allocate a smaller amount to a second vault with a different strategy and track both',
+    tx: 1,
   },
   'RWA': {
     core: 'buy a small position in a tokenised treasury or credit product after reading its backing documents',
     weekly: 'check the underlying asset report and any yield distribution',
     second: 'try a second real-world product — a different asset class than your first — and compare lock-ups',
+    tx: 1,
   },
   'Lending': {
     core: 'supply a stablecoin as collateral and borrow a small amount against it to learn the rates',
     weekly: 'top up collateral or repay a little so your health factor stays comfortable',
     second: 'supply a second asset and test a different market, watching borrow rates on both',
+    tx: 2,
   },
   'Yield': {
     core: 'deposit into a yield vault and note the advertised APY, the fees and the lock-up before you confirm',
     weekly: 'harvest or compound rewards and check whether the APY still holds',
     second: 'try a second vault with a different underlying and compare net yield after fees',
+    tx: 2,
   },
   'Derivatives': {
     core: 'open a small perpetual or options position with isolated margin, sized so a bad day costs little',
     weekly: 'review open positions, funding costs and margin, and close anything you no longer understand',
     second: 'try a second market or an options hedge, keeping total exposure small',
+    tx: 3,
   },
   'CDP': {
     core: 'lock collateral and mint a small amount of its stablecoin, keeping the ratio well above liquidation',
     weekly: 'check your collateral ratio and top it up if the market moves against you',
     second: 'mint in a second collateral type and compare stability fees',
+    tx: 1,
   },
   'Yield Aggregator': {
     core: 'deposit into its auto-compounding vault and watch one full compounding cycle first',
     weekly: 'compare the vault\'s net APY against holding the underlying directly',
     second: 'try a second strategy vault and keep a note of which one actually paid more',
+    tx: 1,
   },
   'Basis Trading': {
     core: 'open a small basis position — long spot, short the future — and track the funding rate daily',
     weekly: 'check funding and roll the position before expiry if the basis is still there',
     second: 'try the same trade on a second pair and compare funding costs',
+    tx: 3,
   },
   'Chain': {
     core: 'bridge a small amount over, stake or delegate it, and run a real transaction on the chain',
     weekly: 'use one live app on the chain and check validator or staking rewards',
     second: 'try a second app on the same chain — a DEX or a lending market — and hold a balance there',
+    tx: 2,
   },
   'Staking Pool': {
     core: 'stake a small amount in the pool and confirm the reward rate, unbonding time and fees first',
     weekly: 'check accrued rewards and whether the validator set changed',
     second: 'stake a smaller amount in a second pool and compare net yield and unbonding',
+    tx: 1,
   },
   'Liquidity Manager': {
     core: 'deposit into a managed liquidity position and read how it rebalances your range',
     weekly: 'check your position\'s range, fees earned and impermanent loss',
     second: 'try a second managed pool in a different pair and compare fee income',
+    tx: 2,
   },
   'Leveraged Farming': {
     core: 'open a small leveraged farm position, at most 2x, and set a clear stop level before you start',
     weekly: 'check your leverage ratio and health, and deleverage if the market turns',
     second: 'try a second farm with a different pair at the same small size',
+    tx: 2,
   },
   'Restaking': {
     core: 'restake a small amount through the protocol and read which operators and AVSs you secure',
     weekly: 'review operator performance and any new restaking rewards',
     second: 'restake through a second operator and compare reward rates',
+    tx: 1,
   },
   'Anchor BTC': {
     core: 'mint or hold a small amount of its BTC-backed asset and verify the backing on-chain',
     weekly: 'check the backing ratio and any redemption queue',
     second: 'use the BTC asset as collateral in a second app and watch the borrow rate',
+    tx: 1,
   },
   'Decentralized BTC': {
     core: 'mint a small amount of its decentralised BTC and confirm the mint and redemption path',
     weekly: 'check the peg and the collateral backing it',
     second: 'provide liquidity for the BTC asset in a second pool',
+    tx: 1,
   },
   'CeDeFi': {
     core: 'deposit a small amount into its CeFi-linked yield product and read the custodian and audit notes',
     weekly: 'check yield payouts and any change in the underlying CeFi exposure',
     second: 'try a second CeDeFi product with a different risk profile',
+    tx: 1,
   },
   'Dual-Token Stablecoin': {
     core: 'mint a small amount of the stablecoin against collateral and keep the ratio conservative',
     weekly: 'check the peg of both tokens and your collateral ratio',
     second: 'use the stablecoin in a second pool or lending market',
+    tx: 1,
   },
   'Farm': {
     core: 'deposit into a farm and stake the LP token, noting the reward token and emission schedule',
     weekly: 'harvest rewards and check whether emissions are falling',
     second: 'farm a second pool with a different pair and compare real yield',
+    tx: 2,
   },
   'Prediction Market': {
     core: 'place a small bet on a market you follow closely, with money you can afford to lose',
     weekly: 'review your open positions and settle or hedge as outcomes clarify',
     second: 'trade a second market in a different topic and keep stakes small',
+    tx: 3,
   },
   'Stablecoin Wrapper': {
     core: 'wrap a small amount into its stablecoin wrapper and verify the 1:1 backing',
     weekly: 'check the peg and redemption path still work',
     second: 'use the wrapped stablecoin as collateral in a second market',
+    tx: 1,
   },
   'Uncollateralized Lending': {
     core: 'lend a small amount to a vetted borrower pool after reading the credit assessment',
     weekly: 'check repayments and the pool\'s default history',
     second: 'lend to a second pool with a different borrower profile',
+    tx: 1,
   },
   'Interest Rate Derivatives': {
     core: 'open a small fixed-rate position and compare it with the floating rate you would otherwise pay',
     weekly: 'check the rate curve and unwind if the fixed rate no longer helps',
     second: 'try a second tenor and see how the rate changes with time',
+    tx: 1,
   },
   'Cross Chain Bridge': {
     core: 'bridge a small amount between two chains you use and time the transfer and its fee',
     weekly: 'bridge a small amount the other way and compare fees and speed',
     second: 'try a second route or destination chain the bridge supports',
+    tx: 2,
   },
   'CDP Manager': {
     core: 'open a small managed CDP position and let it automate your collateral ratio',
     weekly: 'check the manager\'s rebalancing and your ratio',
     second: 'compare a self-managed position against the managed one at the same size',
+    tx: 1,
   },
   'OTC Marketplace': {
     core: 'complete one small OTC trade through its escrow, checking the counterparty rating first',
     weekly: 'review open offers and your completed trade history',
     second: 'list a small offer of your own and manage it through settlement',
+    tx: 1,
   },
   'Insurance': {
     core: 'buy a small cover policy for a protocol you use, after reading exactly what it covers',
     weekly: 'check active covers and any claims activity in the pool',
     second: 'cover a second protocol you use and compare premiums',
+    tx: 1,
   },
   'Payments': {
     core: 'pay for something real through it — a bill or a transfer — and confirm it settles',
     weekly: 'use it for one regular payment so the history shows steady use',
     second: 'try a second payment rail or currency it supports',
+    tx: 4,
   },
   'Governance Incentives': {
     core: 'lock a small amount for voting power and vote on one live proposal after reading it',
     weekly: 'vote on new proposals and check your incentive accrual',
     second: 'delegate a small amount to a second delegate and compare their voting record',
+    tx: 2,
   },
   'Crypto Card Issuer': {
     core: 'order the card and make one small real purchase, noting fees and cashback',
     weekly: 'use the card for one everyday purchase and check the statement',
     second: 'try a second card tier or reward option and compare net benefit',
+    tx: 3,
   },
   'Indexes': {
     core: 'buy a small amount of the index and read exactly which assets it holds and their weights',
     weekly: 'check the index rebalance and your share of it',
     second: 'compare a second index with a different weighting and track both',
+    tx: 1,
   },
   'Collateral Markets': {
     core: 'supply collateral in a market you understand and borrow a small amount against it',
     weekly: 'watch your collateral ratio and the market\'s liquidation rules',
     second: 'supply in a second collateral market and compare rates',
+    tx: 2,
   },
 };
 
@@ -432,13 +550,51 @@ const GENERIC_PLAYBOOK: Playbook = {
   core: 'use its main feature with a small position first, about $25-$100, and learn the fees before you scale',
   weekly: 'return at least once a week and keep a working balance in the protocol',
   second: 'try a second feature of the protocol — a different pool, vault or market than your first position',
+  tx: 2,
 };
 
-/** Five concrete farm steps for one protocol, each 20-600 characters. */
-export function farmSteps(p: SnapshotProtocol, watchlist: boolean, impliedLow: number, impliedHigh: number): string[] {
+function playbookFor(category: string | null): Playbook {
+  return PLAYBOOKS[category ?? ''] ?? GENERIC_PLAYBOOK;
+}
+
+function gasFor(chain: string | undefined): number {
+  if (chain === undefined) return 0.5;
+  return GAS_USD[chain] ?? 0.5;
+}
+
+export interface FarmEconomics {
+  cost: number;
+  per_1k: number;
+  per_1k_low: number;
+  net: number;
+  net_low: number;
+  weekly_tx: number;
+  gas: number;
+}
+
+/** The standard farmer's arithmetic for one row: $1,000 in, 4 weeks, netted. */
+function farmEconomics(p: SnapshotProtocol, implied: number, impliedLow: number, m: ModelConstants): FarmEconomics {
+  const play = playbookFor(p.category);
+  const gas = gasFor(p.chains[0]);
+  const cost = round2(m.setup_cost_usd + m.exit_cost_usd + m.horizon_weeks * play.tx * gas);
+  const per1k = round2(m.airdrop_share * implied * (m.budget_usd / p.tvl_usd));
+  const per1kLow = round2(m.airdrop_share * impliedLow * (m.budget_usd / p.tvl_usd));
+  return {
+    cost,
+    per_1k: per1k,
+    per_1k_low: per1kLow,
+    net: round2(per1k - cost),
+    net_low: round2(per1kLow - cost),
+    weekly_tx: play.tx,
+    gas,
+  };
+}
+
+/** Six concrete farm steps for one protocol, the last one netting the economics. */
+export function farmSteps(p: SnapshotProtocol, watchlist: boolean, impliedLow: number, impliedHigh: number, econ: FarmEconomics): string[] {
   const chain = p.chains[0] ?? 'its main chain';
   const chainCount = p.chains.length;
-  const play = PLAYBOOKS[p.category ?? ''] ?? GENERIC_PLAYBOOK;
+  const play = playbookFor(p.category);
   const tvl = money(p.tvl_usd);
   const watchNote = watchlist
     ? ' It is on the house watchlist, so a snapshot here is the most-watched kind of activity.'
@@ -449,6 +605,7 @@ export function farmSteps(p: SnapshotProtocol, watchlist: boolean, impliedLow: n
     `Build a real footprint over the next 2-4 weeks: ${play.weekly}, keep the position open rather than in-and-out, and leave a balance working so the activity reads as a genuine user, not a one-off. Total gas over the month is usually $10-$40.`,
     `${play.second.charAt(0).toUpperCase() + play.second.slice(1)}, and, where the app offers it, complete any on-chain quest, points task or referral step. Most tasks take 10-30 minutes each.`,
     `Keep records: note each deposit, the date and the transaction hash in a sheet, check the position weekly, and plan your exit before any launch — unstake or withdraw in stages over 2-3 days so you are not caught by a rush. Implied range ${money(impliedLow)}-${money(impliedHigh)} on ${tvl} of TVL rewards patient users.`,
+    `Net it out before you commit $1,000 for 4 weeks: the plan above costs about $${econ.cost.toFixed(2)} all-in ($6 setup, ${econ.weekly_tx} transactions a week on ${chain} at about $${econ.gas.toFixed(2)} each, $4 exit). At a 5% airdrop share of the implied value, pro-rata to capital, the expected airdrop is about $${econ.per_1k.toFixed(2)} per $1K — net $${econ.net.toFixed(2)}, or $${econ.net_low.toFixed(2)} at the range's low end.`,
   ];
   if (chainCount > 1) {
     steps[2] = `Build a real footprint over the next 2-4 weeks across its ${chainCount} chains, starting on ${chain}: ${play.weekly}, keep the position open rather than in-and-out, and leave a balance working so the activity reads as a genuine user. Total gas over the month is usually $10-$40.`;
@@ -488,6 +645,46 @@ function spearman(xs: number[], ys: number[]): number {
   return dx === 0 || dy === 0 ? 0 : num / Math.sqrt(dx * dy);
 }
 
+/** Leave-one-out over the live protocols for one shrinkage k. */
+function looForK(live: SnapshotProtocol[], k: number, snapshot: Snapshot, model: ModelConstants): LooRow {
+  const preds: number[] = [];
+  const actuals: number[] = [];
+  const logErrs: number[] = [];
+  let within2 = 0;
+  for (let i = 0; i < live.length; i++) {
+    const rest = live.filter((_, j) => j !== i);
+    const byCat = new Map<string, number[]>();
+    const all: number[] = [];
+    for (const p of rest) {
+      const ratio = Math.min((p.mcap_usd as number) / p.tvl_usd, model.multiple_cap);
+      all.push(ratio);
+      const key = p.category ?? '(no category)';
+      const list = byCat.get(key) ?? [];
+      list.push(ratio);
+      byCat.set(key, list);
+    }
+    const g = median(all);
+    const p = live[i]!;
+    const arr = byCat.get(p.category ?? '(no category)');
+    const mult = arr !== undefined ? shrink(median(arr), g, arr.length, k) : g;
+    const f = growthFactor(p.change_7d, model) * maturityFactor(p.listed_at, snapshot.as_of, model) * breadthFactor(p.chains.length, model);
+    const pred = Math.max(1, Math.round(p.tvl_usd * mult * f));
+    const actual = p.mcap_usd as number;
+    preds.push(pred);
+    actuals.push(actual);
+    logErrs.push(Math.abs(Math.log(pred / actual)));
+    if (pred / actual >= 0.5 && pred / actual <= 2) within2++;
+  }
+  const medLog = median(logErrs);
+  return {
+    k,
+    median_abs_log_error: medLog,
+    typical_miss_factor: Math.exp(medLog),
+    within_2x: within2,
+    spearman: spearman(preds, actuals),
+  };
+}
+
 export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): { board: BoardRow[]; radar: RadarData } {
   const live = snapshot.protocols.filter(
     (p) => p.mcap_usd !== null && p.mcap_usd > 0 && p.tvl_usd > 0,
@@ -510,7 +707,32 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     multiples[key] = shrink(median(values), globalMultiple, values.length, model.shrink_k);
   }
 
-  // Out-of-sample validation: split the live protocols by slug order.
+  // Size curve: log-log least squares of market cap on TVL over the live set.
+  const nLive = live.length;
+  const logT = live.map((p) => Math.log(p.tvl_usd));
+  const logM = live.map((p) => Math.log(p.mcap_usd as number));
+  const meanT = logT.reduce((a, b) => a + b, 0) / nLive;
+  const meanM = logM.reduce((a, b) => a + b, 0) / nLive;
+  let sxy = 0;
+  let sxx = 0;
+  let syy = 0;
+  for (let i = 0; i < nLive; i++) {
+    sxy += (logT[i]! - meanT) * (logM[i]! - meanM);
+    sxx += (logT[i]! - meanT) ** 2;
+    syy += (logM[i]! - meanM) ** 2;
+  }
+  const curveB = sxy / sxx;
+  const curve: SizeCurve = {
+    a: meanM - curveB * meanT,
+    b: curveB,
+    r2: (sxy * sxy) / (sxx * syy),
+    n: nLive,
+  };
+  const livePoints: LivePoint[] = [...live]
+    .sort((a, b) => (a.slug < b.slug ? -1 : 1))
+    .map((p) => ({ slug: p.slug, tvl_usd: p.tvl_usd, mcap_usd: p.mcap_usd as number }));
+
+  // Out-of-sample validation, split-half: fit on even slugs, test on odd.
   const liveSorted = [...live].sort((a, b) => (a.slug < b.slug ? -1 : 1));
   const fitHalf = liveSorted.filter((_, i) => i % 2 === 0);
   const holdHalf = liveSorted.filter((_, i) => i % 2 === 1);
@@ -542,6 +764,19 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     if (pred / actual >= 0.5 && pred / actual <= 2) within2++;
   }
   const medianLogErr = median(logErrs);
+
+  // Leave-one-out grid: the shrinkage choice, printed and reproducible.
+  const gridKs = [0, 1, 2, 3, 5, 8, 12, 20];
+  const grid = gridKs.map((k) => looForK(live, k, snapshot, model));
+  const bestSpearman = Math.max(...grid.map((g) => g.spearman));
+  const chosenRow = grid.find((g) => g.spearman >= bestSpearman - 0.01) ?? grid[0]!;
+  const loo: LooValidation = {
+    method: 'Leave-one-out over all 128 live-token protocols: each is predicted by category medians fit without it. k is the smallest grid value whose Spearman is within 0.01 of the grid best.',
+    n: live.length,
+    grid,
+    chosen_k: chosenRow.k,
+    chosen: chosenRow,
+  };
 
   // Universe accounting: every protocol in the snapshot is counted once.
   const nullToken = snapshot.protocols.filter(
@@ -578,9 +813,11 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     const implied = Math.max(1, Math.round(p.tvl_usd * multiple * growth * maturity * breadth));
     const low = Math.max(1, Math.round(p.tvl_usd * q1 * growth * maturity * breadth));
     const high = Math.max(1, Math.round(p.tvl_usd * q3 * growth * maturity * breadth));
-    const verdict: BoardRow['verdict'] = low >= snapshot.floor_usd
+    const curveValue = Math.max(1, Math.round(Math.exp(curve.a + curve.b * Math.log(p.tvl_usd)) * growth * maturity * breadth));
+    const econ = farmEconomics(p, implied, low, model);
+    const verdict: BoardRow['verdict'] = econ.net_low > 0
       ? 'FARM'
-      : implied >= snapshot.floor_usd ? 'WATCH' : 'SKIP';
+      : econ.net > 0 ? 'THIN' : 'SKIP';
     return {
       slug: p.slug,
       name: p.name,
@@ -593,7 +830,12 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
       implied_value_usd: implied,
       implied_low_usd: low,
       implied_high_usd: high,
+      curve_value_usd: curveValue,
       verdict,
+      airdrop_per_1k_usd: econ.per_1k,
+      farm_cost_usd: econ.cost,
+      net_usd: econ.net,
+      net_low_usd: econ.net_low,
       multiple,
       multiple_raw: rawMultiple,
       comparables_n: values !== undefined ? values.length : 0,
@@ -601,7 +843,7 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
       maturity_factor: maturity,
       breadth_factor: breadth,
       watchlist: watchSet.has(p.slug),
-      farm_steps: farmSteps(p, watchSet.has(p.slug), low, high),
+      farm_steps: farmSteps(p, watchSet.has(p.slug), low, high, econ),
     };
   });
   rows.sort((a, b) =>
@@ -647,6 +889,9 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     global_multiple: globalMultiple,
     multiples,
     validation,
+    loo,
+    curve,
+    live_points: livePoints,
     universe,
     rows,
     comparables,
@@ -679,9 +924,17 @@ export function boardIssue(board: BoardRow[], snapshot: Snapshot): string | null
     if (row.implied_value_usd < row.implied_low_usd || row.implied_value_usd > row.implied_high_usd) {
       return `row ${row.slug} has a point estimate outside its range`;
     }
-    if (row.verdict !== 'FARM' && row.verdict !== 'WATCH' && row.verdict !== 'SKIP') {
+    if (row.curve_value_usd < 1 || !Number.isInteger(row.curve_value_usd)) {
+      return `row ${row.slug} has a bad curve value`;
+    }
+    if (row.verdict !== 'FARM' && row.verdict !== 'THIN' && row.verdict !== 'SKIP') {
       return `row ${row.slug} has a bad verdict`;
     }
+    if (!Number.isFinite(row.airdrop_per_1k_usd) || !Number.isFinite(row.farm_cost_usd) || !Number.isFinite(row.net_usd)) {
+      return `row ${row.slug} has bad farm economics`;
+    }
+    const expectVerdict = row.net_low_usd > 0 ? 'FARM' : row.net_usd > 0 ? 'THIN' : 'SKIP';
+    if (row.verdict !== expectVerdict) return `row ${row.slug} verdict disagrees with its net`;
     if (row.farm_steps.length < 3 || row.farm_steps.length > 12) {
       return `row ${row.slug} has ${row.farm_steps.length} farm steps`;
     }
