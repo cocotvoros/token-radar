@@ -1,5 +1,11 @@
 # Pulse Radar — token launch radar (token-radar-01)
 
+[![make.fun · token-radar-01](https://make.fun/badge/token-radar-01.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+[![rank](https://make.fun/badge/token-radar-01/cocotvoros/token-radar/rank.svg)](https://make.fun/bounty/token-radar-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+[![reward](https://make.fun/badge/token-radar-01/cocotvoros/token-radar/reward.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+
+Entry for the make.fun bounty [Build the best token launch radar](https://make.fun/bounty/token-radar-01).
+
 A working token launch radar for the make.fun bounty `token-radar-01`. It reads the
 sealed DefiLlama snapshot, finds every protocol that records no token yet and is not a
 wrapped, staked, bridged or versioned product of one that trades, ranks them by implied
