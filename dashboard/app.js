@@ -53,28 +53,36 @@
   document.getElementById('kpi-watch').textContent = D.rows.filter(function (r) { return r.watchlist; }).length + ' / 40';
   document.getElementById('kpi-top').textContent = money(top.implied_value_usd);
   document.getElementById('kpi-top-sub').textContent = 'rank 1 · ' + top.name;
-  document.getElementById('kpi-multiple').textContent = D.global_multiple.toFixed(2) + '×';
-  document.getElementById('kpi-miss').textContent = '×' + D.loo.chosen.typical_miss_factor.toFixed(1);
+  document.getElementById('kpi-multiple').textContent = D.curve.b.toFixed(2);
+  var chosenCore = null;
+  D.tournament.candidates.forEach(function (c) { if (c.name === D.tournament.chosen) chosenCore = c; });
+  document.getElementById('kpi-miss').textContent = '×' + chosenCore.typical_miss_factor.toFixed(1);
   document.getElementById('kpi-miss-sub').textContent = 'typical miss, leave-one-out';
 
   var v = D.validation;
-  var loo = D.loo;
-  var validText = 'Out of sample, two ways. Split-half: fitted on ' + v.fit_n + ' live-token protocols, tested on the other ' +
+  var t = D.tournament;
+  var v3Loo = t.candidates[0];
+  var rs = t.resample;
+  var validText = 'Out of sample, three ways. Split-half: fitted on ' + v.fit_n + ' live-token protocols, tested on the other ' +
     v.holdout_n + ' — typical miss ×' + v.typical_miss_factor.toFixed(2) + ', Spearman ' + v.spearman.toFixed(2) + '. ' +
-    'Leave-one-out over all ' + loo.n + ' (k=' + loo.chosen_k + '): typical miss ×' + loo.chosen.typical_miss_factor.toFixed(2) +
-    ', ' + loo.chosen.within_2x + ' of ' + loo.n + ' within 2×, Spearman ' + loo.chosen.spearman.toFixed(2) +
-    '. ' + v.recompute_match + '.';
+    'Leave-one-out over all ' + t.n + ': the v4 core misses by ×' + chosenCore.typical_miss_factor.toFixed(2) +
+    ' with ' + chosenCore.within_2x + ' of ' + t.n + ' within 2×, against the old category-median core\u2019s ×' +
+    v3Loo.typical_miss_factor.toFixed(2) + ' and ' + v3Loo.within_2x + ' of ' + t.n + '. ' +
+    'Across ' + rs.splits + ' seeded resampled splits it beat the old core on typical miss in ' + rs.v4_beats_v3.typical_miss +
+    ' of ' + rs.splits + '. ' + v.recompute_match + '.';
   document.getElementById('valid-panel').textContent = validText;
   document.getElementById('method-valid').textContent = validText +
     ' The model orders launches better than it prices them, so read ranks first and values second.';
   document.getElementById('method-loo').textContent =
-    'Each live-token protocol is predicted by category medians fit without it, once per shrinkage k. ' +
-    'k is the smallest grid value whose Spearman sits within 0.01 of the grid best — here k=' + loo.chosen_k + '.';
-  var gridHtml = '<table class="grid"><thead><tr><th>k</th><th>Typical miss</th><th>Within 2×</th><th>Spearman</th><th></th></tr></thead><tbody>';
-  loo.grid.forEach(function (g) {
-    gridHtml += '<tr' + (g.k === loo.chosen_k ? ' class="chosen"' : '') + '><td>' + g.k + '</td><td>×' +
-      g.typical_miss_factor.toFixed(2) + '</td><td>' + g.within_2x + ' / ' + loo.n + '</td><td>' +
-      g.spearman.toFixed(3) + '</td><td>' + (g.k === loo.chosen_k ? 'chosen' : '') + '</td></tr>';
+    'Five candidate cores, identical factors, leave-one-out over all ' + t.n + ' live-token protocols — only the pricing core differs. ' +
+    'The old category-median core is the first row; the board runs the chosen row. A seeded ' + rs.splits + '-split resampling study ' +
+    '(64 fit / 64 test) agrees: mean typical miss ×' + rs.v4_core.typical_miss_factor.toFixed(2) + ' for the v4 core against ×' +
+    rs.v3_core.typical_miss_factor.toFixed(2) + ' for the old core, winning ' + rs.v4_beats_v3.typical_miss + ' of ' + rs.splits + ' splits head-to-head.';
+  var gridHtml = '<table class="grid"><thead><tr><th>Candidate core</th><th>Typical miss</th><th>Within 2×</th><th>Spearman</th><th></th></tr></thead><tbody>';
+  t.candidates.forEach(function (c) {
+    gridHtml += '<tr' + (c.name === t.chosen ? ' class="chosen"' : '') + '><td>' + c.name + '</td><td>×' +
+      c.typical_miss_factor.toFixed(2) + '</td><td>' + c.within_2x + ' / ' + t.n + '</td><td>' +
+      c.spearman.toFixed(3) + '</td><td>' + (c.name === t.chosen ? 'chosen' : '') + '</td></tr>';
   });
   gridHtml += '</tbody></table>';
   document.getElementById('loo-grid').innerHTML = gridHtml;
@@ -130,7 +138,7 @@
     document.getElementById('scatter-note').textContent =
       'Each grey dot is one of the ' + D.curve.n + ' live-token protocols (TVL vs market cap, log–log). The line is the fitted size curve, ' +
       'log(mcap) = ' + D.curve.a.toFixed(2) + ' + ' + D.curve.b.toFixed(2) + ' × log(TVL), R² ' + D.curve.r2.toFixed(2) +
-      ' — TVL alone leaves most of the variance unexplained, so the curve is a cross-check, never the price. ' +
+      ' — the spine of the model: every implied value starts on this line, then its category offset and factors move it. ' +
       'Gold dots are the board\u2019s top 10 implied values on the same axes.';
   })();
 
@@ -212,9 +220,9 @@
       '<dt>TVL</dt><dd>' + money(r.tvl_usd) + '</dd>' +
       '<dt>7-day change</dt><dd>' + pct(r.change_7d) + '</dd>' +
       '<dt>Tracked since</dt><dd>' + (r.listed_at || 'unknown') + ' (' + age(r.listed_at) + ')</dd>' +
-      '<dt>Category multiple</dt><dd>' + r.multiple.toFixed(3) + '× (raw median ' + r.multiple_raw.toFixed(3) +
-      '×, shrunk from ' + r.comparables_n + ' live comparables)</dd>' +
-      '<dt>Size curve says</dt><dd>' + money(r.curve_value_usd) + ' (cross-check only)</dd>' +
+      '<dt>Implied multiple</dt><dd>' + r.multiple.toFixed(3) + '× — size curve ' + r.multiple_raw.toFixed(3) +
+      '× at this TVL, category offset ' + r.offset_factor.toFixed(2) + '× (shrunk, from ' + r.comparables_n + ' live comparables)</dd>' +
+      '<dt>Curve alone says</dt><dd>' + money(r.curve_value_usd) + ' (no category offset)</dd>' +
       '<dt>Growth factor</dt><dd>' + r.growth_factor.toFixed(3) + '×</dd>' +
       '<dt>Maturity factor</dt><dd>' + r.maturity_factor.toFixed(3) + '×</dd>' +
       '<dt>Breadth factor</dt><dd>' + r.breadth_factor.toFixed(3) + '×</dd>' +

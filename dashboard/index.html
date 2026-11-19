@@ -19,18 +19,18 @@
   <div class="tile"><span class="klabel">Ranked</span><b id="kpi-ranked">—</b><span class="ksub" id="kpi-ranked-sub">of the snapshot</span></div>
   <div class="tile"><span class="klabel">Watchlist</span><b id="kpi-watch">—</b><span class="ksub">house floor, covered</span></div>
   <div class="tile"><span class="klabel">Top implied value</span><b id="kpi-top">—</b><span class="ksub" id="kpi-top-sub">rank 1</span></div>
-  <div class="tile"><span class="klabel">Global multiple</span><b id="kpi-multiple">—</b><span class="ksub">median mcap / TVL, live tokens</span></div>
+  <div class="tile"><span class="klabel">Size curve slope</span><b id="kpi-multiple">—</b><span class="ksub">log–log fit, live tokens</span></div>
   <div class="tile"><span class="klabel">Out-of-sample miss</span><b id="kpi-miss">—</b><span class="ksub" id="kpi-miss-sub">holdout, see Method</span></div>
 </section>
 
-<p class="formula">Implied value = TVL × category multiple (shrunk toward the global median) × growth × maturity × breadth. Every row also shows its low–high range, its expected airdrop per $1K, and a FARM / THIN / SKIP verdict net of gas.</p>
+<p class="formula">Implied value = size curve fitted on the live tokens × category offset (shrunk) × growth × maturity × breadth. Every row also shows its low–high range — the model's own error band — its expected airdrop per $1K, and a FARM / THIN / SKIP verdict net of gas.</p>
 <p class="valid" id="valid-panel">Validation loading…</p>
 <p class="universe" id="universe-line"></p>
 
 <section class="scatter-wrap">
   <h3>Size curve: what already trades, and where the board's picks sit</h3>
   <div id="scatter"></div>
-  <p class="scatter-note" id="scatter-note">Each grey dot is a live-token protocol (TVL vs market cap, log–log). The line is the fitted size curve; gold dots are the board's top 10 implied values. The curve is a cross-check, never the price — category comparables price the board.</p>
+  <p class="scatter-note" id="scatter-note">Each grey dot is a live-token protocol (TVL vs market cap, log–log). The line is the fitted size curve — the spine of the model; gold dots are the board's top 10 implied values, each shifted off the line by its category offset and factors.</p>
 </section>
 
 <nav class="tabs">
@@ -69,8 +69,8 @@
 </section>
 
 <section id="view-live" hidden>
-  <p class="intro">The market's own yardstick: the live-token protocols whose market-cap-to-TVL
-  ratios price every implied value on the board. They never rank — they calibrate.</p>
+  <p class="intro">The market's own yardstick: the live-token protocols whose sizes and market caps
+  fit the curve and the category offsets behind every implied value on the board. They never rank — they calibrate.</p>
   <table>
     <thead><tr>
       <th>Protocol</th><th>Category</th>
@@ -82,20 +82,21 @@
 
 <section id="view-method" hidden>
   <h2>How the radar prices a launch</h2>
-  <p>Implied value = TVL × category multiple × growth × maturity × breadth.</p>
+  <p>Implied value = size curve × category offset × growth × maturity × breadth. Earlier versions
+  priced rows from category medians of market-cap-to-TVL ratios; the tournament below shows why that
+  core was replaced — with 128 live-token protocols over 34 categories, most medians rest on a handful
+  of protocols and add noise, while size is the signal every category shares.</p>
   <ul>
-    <li><b>Category multiple:</b> the median market-cap-to-TVL ratio of the protocols in
-    that category whose token already trades, shrunk toward the global median:
-    (n × category median + k × global median) / (n + k), so a category priced by one
-    or two thin protocols cannot set its own price. Each live ratio is capped at 10×
-    first; the global median is used when a category has no live protocol. The
-    shrinkage k is chosen on the leave-one-out grid below, not by taste.</li>
-    <li><b>Range:</b> the same formula with the category's first and third quartiles of
-    capped live ratios, so every row shows a low–high range instead of false precision.</li>
-    <li><b>Size curve:</b> a log–log fit of market cap on TVL over the 128 live-token
-    protocols, drawn on the board's scatter as a cross-check. It never prices a row:
-    TVL alone leaves most of the variance unexplained, and the detail view shows what
-    the curve alone would say next to the board's own value.</li>
+    <li><b>Size curve:</b> a log–log least-squares fit of market cap on TVL over the 128 live-token
+    protocols, log(mcap) = a + b × log(TVL). It is the spine of the price: what a protocol of this
+    size is worth when it launches, before its category speaks.</li>
+    <li><b>Category offset:</b> each category's live protocols sit above or below the curve by a
+    mean log residual; the board applies that residual shrunk by n / (n + 8), so a category with
+    many live protocols keeps most of its voice and a thin one is pulled toward the curve. A
+    category with no live protocol gets no offset. The detail view shows each row's offset.</li>
+    <li><b>Range:</b> the model's own interquartile error band — the point estimate times the
+    25th and 75th percentiles of the model's residuals on the live protocols — so every row
+    shows a low–high range the model demonstrably earns, instead of false precision.</li>
     <li><b>Growth:</b> the protocol's 7-day TVL change, clamped to −40%…+120%, weighted 0.35.</li>
     <li><b>Maturity:</b> 0.80 for a brand-new listing, rising to 1.20 after four years tracked
     with no token; 0.85 when no listing date is recorded.</li>
@@ -113,7 +114,7 @@
   may set aside more, less, or nothing.</p>
   <h2>Out-of-sample validation</h2>
   <p id="method-valid">Validation loading…</p>
-  <h2>Leave-one-out: the shrinkage grid</h2>
+  <h2>The model tournament: why this core</h2>
   <p id="method-loo">Validation loading…</p>
   <div id="loo-grid"></div>
   <h2>The whole snapshot, accounted for</h2>

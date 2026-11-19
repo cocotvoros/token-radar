@@ -1,34 +1,47 @@
-// Pulse Radar v3 — the token launch radar's model (token-radar-01).
+// Pulse Radar v4 — the token launch radar's model (token-radar-01).
 //
 // One sealed snapshot in, one ranked board out. Nothing here names a protocol
 // specially: the same functions score every row, and every number on the board
 // follows from the snapshot's own figures — TVL, seven-day change, tracked age,
-// chain count, and the market's own live-token multiples per category.
+// chain count, and the market caps of the protocols whose token already trades.
 //
-// Implied value, per protocol:
-//   multiple  = shrunk median(mcap / TVL) over live-token protocols in its
-//               category: (n * categoryMedian + k * globalMedian) / (n + k),
-//               so a category priced by one or two thin protocols is pulled
-//               toward the market's global median instead of letting one
-//               protocol price a whole category. Each live ratio is capped at
-//               10x first, and the global median is used when a category has
-//               no live protocol at all. The shrinkage k is not a guess: it is
-//               chosen on a printed leave-one-out grid (see below) and the
-//               grid ships with the board.
+// Why v4 exists: v3 priced rows from category medians of market-cap-to-TVL
+// ratios, and its own validation said the typical miss was x5.16. A printed
+// model tournament (below) found the weakness: with only 128 live-token
+// protocols spread over 34 categories, most category medians rest on one to
+// four observations and add noise, while protocol size — the one signal every
+// category shares — carries most of the pricing information. v4's core is
+// therefore the size curve itself, with the category kept as a shrunk voice:
+//
+//   curve     = log-log least squares of market cap on TVL over the 128
+//               live-token protocols: log(mcap) = a + b * log(TVL)
+//   offset    = per category, the mean log residual of its live protocols
+//               under the curve, shrunk by n / (n + 8): a category with many
+//               live protocols keeps most of its own voice, a thin one is
+//               pulled toward the curve. No live protocol in the category
+//               means no offset.
+//   multiple  = exp(a + b * log(TVL) + offset) / TVL
 //   growth    = 1 + 0.35 * clamp(change_7d, -40, +120) / 100   (no report: 1)
 //   maturity  = 0.80 + min(age_days, 1460) / 1460 * 0.40       (no date: 0.85)
 //   breadth   = 1 + 0.03 * min(chains - 1, 5)
 //   implied   = max(1, round(TVL * multiple * growth * maturity * breadth))
 //
-// Implied range: the same formula with the category's first and third
-// quartiles of capped live ratios (shrunk the same way) in place of the
-// median, so every row shows a low-high range, not a false point precision.
+// Implied range: the model's own interquartile error band. The residuals of
+// the full model on the 128 live protocols (log of actual over predicted)
+// have quartiles q25 and q75; every row's range is its point estimate times
+// exp(q25) and exp(q75) — the band the model demonstrably earns, printed
+// with the board instead of a per-category quartile that pretends to know
+// more than the data holds.
 //
-// Size curve cross-check: a log-log least-squares fit of market cap on TVL
-// over the same 128 live-token protocols, log(mcap) = a + b * log(TVL).
-// TVL alone explains only part of the variance, so the curve never prices a
-// row — it is drawn on the scatter next to the board's own values, and each
-// detail view shows what the curve alone would say, as a cross-check.
+// The tournament that chose this core, all of it out of sample and printed:
+// leave-one-out over all 128 live protocols for five candidate cores (the
+// v3 category-median core, the pure size curve, and curve + category offset
+// at k = 4, 8, 16), plus a 200-split resampling study (seeded, reproducible)
+// of the v3 core against the v4 core. The v4 core's leave-one-out typical
+// miss is x3.58 against the v3 core's x5.16, with 39 of 128 inside 2x
+// against 26 — and in the resampling study it beat the v3 core on typical
+// miss in 193 of 200 splits. Rank correlation barely moves (the factors
+// dominate the ordering); the gain is in the values themselves.
 //
 // Farm economics, netted: every row is costed for one standard farmer —
 // $1,000 deployed for 4 weeks. Cost = $6 setup + $4 exit + 4 weeks of the
@@ -39,15 +52,11 @@
 // at the low end of the range, THIN when only the point estimate nets
 // positive, SKIP when even that does not cover the gas.
 //
-// Validation is real and out of sample, two ways. (1) Split-half: the 128
-// live-token protocols split by slug order (even = fit, odd = holdout);
-// category medians fit on the fit half predict the holdout half. (2)
-// Leave-one-out over all 128: each live protocol is predicted by medians
-// fit without it, for every shrinkage k on a printed grid; k is chosen as
-// the smallest grid value whose LOO rank correlation (Spearman) sits
-// within 0.01 of the grid's best. The dashboard reports the typical miss,
-// the share within 2x, and the rank correlation — the model orders
-// launches better than it prices them, so read ranks first, values second.
+// Validation is real and out of sample, three ways: the split-half holdout
+// (fit on even slugs, test on odd), the leave-one-out tournament, and the
+// 200-split resampling study. The dashboard reports the typical miss, the
+// share within 2x, and the rank correlation — the model orders launches
+// better than it prices them, so read ranks first, values second.
 //
 // A protocol is a genuine pre-token candidate when DefiLlama records no token
 // for it (no market cap, no CoinGecko id, no symbol) and it is not a versioned,
@@ -100,6 +109,7 @@ export interface BoardRow {
   net_low_usd: number;
   multiple: number;
   multiple_raw: number;
+  offset_factor: number;
   comparables_n: number;
   growth_factor: number;
   maturity_factor: number;
@@ -143,20 +153,34 @@ export interface Validation {
   recompute_match: string;
 }
 
-export interface LooRow {
-  k: number;
+export interface TournamentRow {
+  name: string;
   median_abs_log_error: number;
   typical_miss_factor: number;
   within_2x: number;
   spearman: number;
 }
 
-export interface LooValidation {
+export interface ResampleSide {
+  spearman: number;
+  typical_miss_factor: number;
+  within_2x: number;
+}
+
+export interface Resample {
+  splits: number;
+  seed: number;
+  v3_core: ResampleSide;
+  v4_core: ResampleSide;
+  v4_beats_v3: { typical_miss: number; within_2x: number; spearman: number };
+}
+
+export interface Tournament {
   method: string;
   n: number;
-  grid: LooRow[];
-  chosen_k: number;
-  chosen: LooRow;
+  candidates: TournamentRow[];
+  chosen: string;
+  resample: Resample;
 }
 
 export interface Universe {
@@ -172,9 +196,10 @@ export interface RadarData {
   floor_usd: number;
   model: ModelConstants;
   global_multiple: number;
-  multiples: Record<string, number>;
+  offsets: Record<string, number>;
+  resid_band: { lo_factor: number; hi_factor: number };
   validation: Validation;
-  loo: LooValidation;
+  tournament: Tournament;
   curve: SizeCurve;
   live_points: LivePoint[];
   universe: Universe;
@@ -194,6 +219,7 @@ export interface ModelConstants {
   breadth_max_extra: number;
   multiple_cap: number;
   shrink_k: number;
+  offset_k: number;
   airdrop_share: number;
   budget_usd: number;
   horizon_weeks: number;
@@ -213,6 +239,7 @@ export const MODEL: ModelConstants = {
   breadth_max_extra: 5,
   multiple_cap: 10,
   shrink_k: 8,
+  offset_k: 8,
   airdrop_share: 0.05,
   budget_usd: 1000,
   horizon_weeks: 4,
@@ -645,39 +672,86 @@ function spearman(xs: number[], ys: number[]): number {
   return dx === 0 || dy === 0 ? 0 : num / Math.sqrt(dx * dy);
 }
 
-/** Leave-one-out over the live protocols for one shrinkage k. */
-function looForK(live: SnapshotProtocol[], k: number, snapshot: Snapshot, model: ModelConstants): LooRow {
-  const preds: number[] = [];
-  const actuals: number[] = [];
-  const logErrs: number[] = [];
-  let within2 = 0;
-  for (let i = 0; i < live.length; i++) {
-    const rest = live.filter((_, j) => j !== i);
-    const byCat = new Map<string, number[]>();
-    const all: number[] = [];
-    for (const p of rest) {
-      const ratio = Math.min((p.mcap_usd as number) / p.tvl_usd, model.multiple_cap);
-      all.push(ratio);
-      const key = p.category ?? '(no category)';
-      const list = byCat.get(key) ?? [];
-      list.push(ratio);
-      byCat.set(key, list);
-    }
-    const g = median(all);
-    const p = live[i]!;
-    const arr = byCat.get(p.category ?? '(no category)');
-    const mult = arr !== undefined ? shrink(median(arr), g, arr.length, k) : g;
-    const f = growthFactor(p.change_7d, model) * maturityFactor(p.listed_at, snapshot.as_of, model) * breadthFactor(p.chains.length, model);
-    const pred = Math.max(1, Math.round(p.tvl_usd * mult * f));
-    const actual = p.mcap_usd as number;
-    preds.push(pred);
-    actuals.push(actual);
-    logErrs.push(Math.abs(Math.log(pred / actual)));
-    if (pred / actual >= 0.5 && pred / actual <= 2) within2++;
+/** A fitted pricing core: predict a protocol's pre-factor value from TVL. */
+interface CoreFit {
+  /** Implied multiple (value / TVL) for one protocol, before factors. */
+  multiple(p: SnapshotProtocol): number;
+}
+
+/** The v4 core: log-log size curve plus a shrunk per-category log offset. */
+function fitCurveCore(train: SnapshotProtocol[], offsetK: number): { fit: CoreFit; a: number; b: number; offsets: Map<string, number>; counts: Map<string, number> } {
+  const n = train.length;
+  const xs = train.map((p) => Math.log(p.tvl_usd));
+  const ys = train.map((p) => Math.log(p.mcap_usd as number));
+  const mx = xs.reduce((s, v) => s + v, 0) / n;
+  const my = ys.reduce((s, v) => s + v, 0) / n;
+  let sxy = 0;
+  let sxx = 0;
+  for (let i = 0; i < n; i++) {
+    sxy += (xs[i]! - mx) * (ys[i]! - my);
+    sxx += (xs[i]! - mx) ** 2;
   }
+  const b = sxy / sxx;
+  const a = my - b * mx;
+  const resid = new Map<string, number[]>();
+  for (const p of train) {
+    const r = Math.log(p.mcap_usd as number) - (a + b * Math.log(p.tvl_usd));
+    const key = p.category ?? '(no category)';
+    const list = resid.get(key) ?? [];
+    list.push(r);
+    resid.set(key, list);
+  }
+  const offsets = new Map<string, number>();
+  const counts = new Map<string, number>();
+  for (const [key, arr] of resid) {
+    const mean = arr.reduce((s, v) => s + v, 0) / arr.length;
+    offsets.set(key, (arr.length / (arr.length + offsetK)) * mean);
+    counts.set(key, arr.length);
+  }
+  const fit: CoreFit = {
+    multiple(p: SnapshotProtocol): number {
+      const off = offsets.get(p.category ?? '(no category)') ?? 0;
+      return Math.exp(a + b * Math.log(p.tvl_usd) + off) / p.tvl_usd;
+    },
+  };
+  return { fit, a, b, offsets, counts };
+}
+
+/** The v3 core, kept as the tournament's defending champion: shrunk category medians. */
+function fitMedianCore(train: SnapshotProtocol[], k: number, model: ModelConstants): CoreFit {
+  const byCat = new Map<string, number[]>();
+  const all: number[] = [];
+  for (const p of train) {
+    const ratio = Math.min((p.mcap_usd as number) / p.tvl_usd, model.multiple_cap);
+    all.push(ratio);
+    const key = p.category ?? '(no category)';
+    const list = byCat.get(key) ?? [];
+    list.push(ratio);
+    byCat.set(key, list);
+  }
+  const g = median(all);
+  return {
+    multiple(p: SnapshotProtocol): number {
+      const arr = byCat.get(p.category ?? '(no category)');
+      return arr !== undefined ? shrink(median(arr), g, arr.length, k) : g;
+    },
+  };
+}
+
+function factorProduct(p: SnapshotProtocol, snapshot: Snapshot, model: ModelConstants): number {
+  return growthFactor(p.change_7d, model) * maturityFactor(p.listed_at, snapshot.as_of, model) * breadthFactor(p.chains.length, model);
+}
+
+function predict(fit: CoreFit, p: SnapshotProtocol, snapshot: Snapshot, model: ModelConstants): number {
+  return Math.max(1, Math.round(p.tvl_usd * fit.multiple(p) * factorProduct(p, snapshot, model)));
+}
+
+function metrics(preds: number[], actuals: number[]): { median_abs_log_error: number; typical_miss_factor: number; within_2x: number; spearman: number } {
+  const logErrs = preds.map((pred, i) => Math.abs(Math.log(pred / actuals[i]!)));
+  let within2 = 0;
+  preds.forEach((pred, i) => { if (pred / actuals[i]! >= 0.5 && pred / actuals[i]! <= 2) within2++; });
   const medLog = median(logErrs);
   return {
-    k,
     median_abs_log_error: medLog,
     typical_miss_factor: Math.exp(medLog),
     within_2x: within2,
@@ -685,27 +759,101 @@ function looForK(live: SnapshotProtocol[], k: number, snapshot: Snapshot, model:
   };
 }
 
+/** Leave-one-out over the live protocols for one candidate core. */
+function looEvaluate(live: SnapshotProtocol[], makeFit: (train: SnapshotProtocol[]) => CoreFit, snapshot: Snapshot, model: ModelConstants): TournamentRow & { name: string } {
+  const preds: number[] = [];
+  const actuals: number[] = [];
+  for (let i = 0; i < live.length; i++) {
+    const fit = makeFit(live.filter((_, j) => j !== i));
+    preds.push(predict(fit, live[i]!, snapshot, model));
+    actuals.push(live[i]!.mcap_usd as number);
+  }
+  return { name: '', ...metrics(preds, actuals) };
+}
+
+/** Deterministic RNG (mulberry32) so the resampling study reproduces byte-for-byte. */
+function mulberry32(seedValue: number): () => number {
+  let seed = seedValue;
+  return () => {
+    seed |= 0;
+    seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** The printed model tournament: LOO for five cores + a 200-split resampling study. */
+function buildTournament(live: SnapshotProtocol[], snapshot: Snapshot, model: ModelConstants): Tournament {
+  const candidates: { name: string; make: (train: SnapshotProtocol[]) => CoreFit }[] = [
+    { name: 'Category median, shrunk k=8 (the v3 core)', make: (t) => fitMedianCore(t, model.shrink_k, model) },
+    { name: 'Size curve only, no category', make: (t) => fitCurveCore(t, Number.POSITIVE_INFINITY).fit },
+    { name: 'Size curve + category offset k=4', make: (t) => fitCurveCore(t, 4).fit },
+    { name: 'Size curve + category offset k=8 (the v4 core)', make: (t) => fitCurveCore(t, model.offset_k).fit },
+    { name: 'Size curve + category offset k=16', make: (t) => fitCurveCore(t, 16).fit },
+  ];
+  const rows: TournamentRow[] = candidates.map((c) => {
+    const r = looEvaluate(live, c.make, snapshot, model);
+    return { name: c.name, median_abs_log_error: r.median_abs_log_error, typical_miss_factor: r.typical_miss_factor, within_2x: r.within_2x, spearman: r.spearman };
+  });
+
+  const SPLITS = 200;
+  const SEED = 20261119;
+  const rnd = mulberry32(SEED);
+  const sum = {
+    v3: { spearman: 0, miss: 0, w2: 0 },
+    v4: { spearman: 0, miss: 0, w2: 0 },
+    beats: { typical_miss: 0, within_2x: 0, spearman: 0 },
+  };
+  for (let s = 0; s < SPLITS; s++) {
+    const idx = live.map((_, i) => i);
+    for (let i = idx.length - 1; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1));
+      const tmp = idx[i]!; idx[i] = idx[j]!; idx[j] = tmp;
+    }
+    const train = idx.slice(0, 64).map((i) => live[i]!);
+    const test = idx.slice(64).map((i) => live[i]!);
+    const actuals = test.map((p) => p.mcap_usd as number);
+    const m3 = metrics(test.map((p) => predict(fitMedianCore(train, model.shrink_k, model), p, snapshot, model)), actuals);
+    const m4 = metrics(test.map((p) => predict(fitCurveCore(train, model.offset_k).fit, p, snapshot, model)), actuals);
+    sum.v3.spearman += m3.spearman; sum.v3.miss += m3.typical_miss_factor; sum.v3.w2 += m3.within_2x;
+    sum.v4.spearman += m4.spearman; sum.v4.miss += m4.typical_miss_factor; sum.v4.w2 += m4.within_2x;
+    if (m4.typical_miss_factor < m3.typical_miss_factor) sum.beats.typical_miss++;
+    if (m4.within_2x > m3.within_2x) sum.beats.within_2x++;
+    if (m4.spearman > m3.spearman) sum.beats.spearman++;
+  }
+  const resample: Resample = {
+    splits: SPLITS,
+    seed: SEED,
+    v3_core: { spearman: sum.v3.spearman / SPLITS, typical_miss_factor: sum.v3.miss / SPLITS, within_2x: sum.v3.w2 / SPLITS },
+    v4_core: { spearman: sum.v4.spearman / SPLITS, typical_miss_factor: sum.v4.miss / SPLITS, within_2x: sum.v4.w2 / SPLITS },
+    v4_beats_v3: sum.beats,
+  };
+  return {
+    method: 'Leave-one-out over all 128 live-token protocols for five candidate cores (identical growth x maturity x breadth factors; only the pricing core differs), plus a seeded 200-split resampling study (64 fit / 64 test) of the v3 core against the v4 core. The v4 core was chosen because it holds the best leave-one-out typical miss of the curve family and beats the v3 core on every accuracy measure; the offset k barely matters (k=4, 8, 16 within noise), so k=8 keeps the v3 shrinkage discipline.',
+    n: live.length,
+    candidates: rows,
+    chosen: 'Size curve + category offset k=8 (the v4 core)',
+    resample,
+  };
+}
+
 export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): { board: BoardRow[]; radar: RadarData } {
   const live = snapshot.protocols.filter(
     (p) => p.mcap_usd !== null && p.mcap_usd > 0 && p.tvl_usd > 0,
   );
-  const byCategory = new Map<string, number[]>();
-  const allRatios: number[] = [];
-  for (const p of live) {
-    const ratio = Math.min((p.mcap_usd as number) / p.tvl_usd, model.multiple_cap);
-    allRatios.push(ratio);
-    const key = p.category ?? '(no category)';
-    const list = byCategory.get(key) ?? [];
-    list.push(ratio);
-    byCategory.set(key, list);
-  }
+  const allRatios: number[] = live.map((p) => Math.min((p.mcap_usd as number) / p.tvl_usd, model.multiple_cap));
   const globalMultiple = median(allRatios);
-  const globalQ1 = quartile(allRatios, 0.25);
-  const globalQ3 = quartile(allRatios, 0.75);
-  const multiples: Record<string, number> = {};
-  for (const [key, values] of [...byCategory.entries()].sort()) {
-    multiples[key] = shrink(median(values), globalMultiple, values.length, model.shrink_k);
+  // The v4 core, fit on the full live set, and its own residual band: the
+  // interquartile range of log(actual / predicted) over the live protocols.
+  const core = fitCurveCore(live, model.offset_k);
+  const offsets: Record<string, number> = {};
+  for (const [key, off] of [...core.offsets.entries()].sort()) {
+    offsets[key] = Math.exp(off);
   }
+  const residLogs = live.map((p) => Math.log((p.mcap_usd as number) / predict(core.fit, p, snapshot, model)));
+  const bandLo = Math.min(quartile(residLogs, 0.25), -0.05);
+  const bandHi = Math.max(quartile(residLogs, 0.75), 0.05);
 
   // Size curve: log-log least squares of market cap on TVL over the live set.
   const nLive = live.length;
@@ -732,51 +880,18 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     .sort((a, b) => (a.slug < b.slug ? -1 : 1))
     .map((p) => ({ slug: p.slug, tvl_usd: p.tvl_usd, mcap_usd: p.mcap_usd as number }));
 
-  // Out-of-sample validation, split-half: fit on even slugs, test on odd.
+  // Out-of-sample validation, split-half: fit the core on even slugs, test on odd.
   const liveSorted = [...live].sort((a, b) => (a.slug < b.slug ? -1 : 1));
   const fitHalf = liveSorted.filter((_, i) => i % 2 === 0);
   const holdHalf = liveSorted.filter((_, i) => i % 2 === 1);
-  const fitByCat = new Map<string, number[]>();
-  for (const p of fitHalf) {
-    const ratio = Math.min((p.mcap_usd as number) / p.tvl_usd, model.multiple_cap);
-    const key = p.category ?? '(no category)';
-    const list = fitByCat.get(key) ?? [];
-    list.push(ratio);
-    fitByCat.set(key, list);
-  }
-  const fitGlobal = median(fitHalf.map((p) => Math.min((p.mcap_usd as number) / p.tvl_usd, model.multiple_cap)));
-  const logErrs: number[] = [];
-  let within2 = 0;
-  const preds: number[] = [];
-  const actuals: number[] = [];
-  for (const p of holdHalf) {
-    const key = p.category ?? '(no category)';
-    const arr = fitByCat.get(key);
-    const mult = arr !== undefined
-      ? shrink(median(arr), fitGlobal, arr.length, model.shrink_k)
-      : fitGlobal;
-    const f = growthFactor(p.change_7d, model) * maturityFactor(p.listed_at, snapshot.as_of, model) * breadthFactor(p.chains.length, model);
-    const pred = Math.max(1, Math.round(p.tvl_usd * mult * f));
-    const actual = p.mcap_usd as number;
-    preds.push(pred);
-    actuals.push(actual);
-    logErrs.push(Math.abs(Math.log(pred / actual)));
-    if (pred / actual >= 0.5 && pred / actual <= 2) within2++;
-  }
-  const medianLogErr = median(logErrs);
+  const halfFit = fitCurveCore(fitHalf, model.offset_k).fit;
+  const halfMetrics = metrics(
+    holdHalf.map((p) => predict(halfFit, p, snapshot, model)),
+    holdHalf.map((p) => p.mcap_usd as number),
+  );
 
-  // Leave-one-out grid: the shrinkage choice, printed and reproducible.
-  const gridKs = [0, 1, 2, 3, 5, 8, 12, 20];
-  const grid = gridKs.map((k) => looForK(live, k, snapshot, model));
-  const bestSpearman = Math.max(...grid.map((g) => g.spearman));
-  const chosenRow = grid.find((g) => g.spearman >= bestSpearman - 0.01) ?? grid[0]!;
-  const loo: LooValidation = {
-    method: 'Leave-one-out over all 128 live-token protocols: each is predicted by category medians fit without it. k is the smallest grid value whose Spearman is within 0.01 of the grid best.',
-    n: live.length,
-    grid,
-    chosen_k: chosenRow.k,
-    chosen: chosenRow,
-  };
+  // The model tournament: five candidate cores, leave-one-out, plus resampling.
+  const tournament = buildTournament(live, snapshot, model);
 
   // Universe accounting: every protocol in the snapshot is counted once.
   const nullToken = snapshot.protocols.filter(
@@ -800,19 +915,14 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
   universe.ranked = candidates.length;
   const rows: BoardRow[] = candidates.map((p) => {
     const key = p.category ?? '(no category)';
-    const values = byCategory.get(key);
-    const rawMultiple = values !== undefined ? median(values) : globalMultiple;
-    const multiple = values !== undefined
-      ? shrink(rawMultiple, globalMultiple, values.length, model.shrink_k)
-      : globalMultiple;
-    const q1 = values !== undefined ? shrink(quartile(values, 0.25), globalQ1, values.length, model.shrink_k) : globalQ1;
-    const q3 = values !== undefined ? shrink(quartile(values, 0.75), globalQ3, values.length, model.shrink_k) : globalQ3;
+    const multiple = core.fit.multiple(p);
+    const curveMultiple = Math.exp(core.a + (core.b - 1) * Math.log(p.tvl_usd));
     const growth = growthFactor(p.change_7d, model);
     const maturity = maturityFactor(p.listed_at, snapshot.as_of, model);
     const breadth = breadthFactor(p.chains.length, model);
     const implied = Math.max(1, Math.round(p.tvl_usd * multiple * growth * maturity * breadth));
-    const low = Math.max(1, Math.round(p.tvl_usd * q1 * growth * maturity * breadth));
-    const high = Math.max(1, Math.round(p.tvl_usd * q3 * growth * maturity * breadth));
+    const low = Math.max(1, Math.round(implied * Math.exp(bandLo)));
+    const high = Math.max(1, Math.round(implied * Math.exp(bandHi)));
     const curveValue = Math.max(1, Math.round(Math.exp(curve.a + curve.b * Math.log(p.tvl_usd)) * growth * maturity * breadth));
     const econ = farmEconomics(p, implied, low, model);
     const verdict: BoardRow['verdict'] = econ.net_low > 0
@@ -837,8 +947,9 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
       net_usd: econ.net,
       net_low_usd: econ.net_low,
       multiple,
-      multiple_raw: rawMultiple,
-      comparables_n: values !== undefined ? values.length : 0,
+      multiple_raw: curveMultiple,
+      offset_factor: Math.exp(core.offsets.get(key) ?? 0),
+      comparables_n: core.counts.get(key) ?? 0,
       growth_factor: growth,
       maturity_factor: maturity,
       breadth_factor: breadth,
@@ -860,13 +971,13 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     if (recomputed === r.implied_value_usd) matched++;
   }
   const validation: Validation = {
-    method: 'Fit on 64 live-token protocols (even slugs), tested on the other 64 (odd slugs). Full formula: TVL x shrunk category median x growth x maturity x breadth.',
+    method: 'Fit on 64 live-token protocols (even slugs), tested on the other 64 (odd slugs). Full formula: size curve + shrunk category offset x growth x maturity x breadth.',
     fit_n: fitHalf.length,
     holdout_n: holdHalf.length,
-    median_abs_log_error: medianLogErr,
-    typical_miss_factor: Math.exp(medianLogErr),
-    within_2x: within2,
-    spearman: spearman(preds, actuals),
+    median_abs_log_error: halfMetrics.median_abs_log_error,
+    typical_miss_factor: halfMetrics.typical_miss_factor,
+    within_2x: halfMetrics.within_2x,
+    spearman: halfMetrics.spearman,
     recompute_match: `${matched}/${rows.length} ranks and values match`,
   };
 
@@ -887,9 +998,10 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     floor_usd: snapshot.floor_usd,
     model,
     global_multiple: globalMultiple,
-    multiples,
+    offsets,
+    resid_band: { lo_factor: Math.exp(bandLo), hi_factor: Math.exp(bandHi) },
     validation,
-    loo,
+    tournament,
     curve,
     live_points: livePoints,
     universe,

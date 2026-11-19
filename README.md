@@ -13,20 +13,26 @@ launch value, and hands in a static dashboard with a detail view and a farm plan
 
 ## The model
 
-Implied value is priced from the market's own record, not a flat multiple:
+Implied value is priced from the market's own record. Earlier versions used per-category
+median market-cap-to-TVL ratios; a printed model tournament (leave-one-out over all 128
+live-token protocols, plus a seeded 200-split resampling study) showed those medians —
+most resting on a handful of protocols — were the model's weak point, so v4's core is:
 
-- For each category, take the median market-cap-to-TVL ratio of the protocols in that
-  category whose token already trades (global median as fallback). Each live ratio is
-  capped at 10× first, so one thin-TVL protocol cannot price a whole category.
-- `implied = TVL × category multiple × growth × maturity × breadth`
+- A log–log size curve fitted on the 128 live-token protocols, `log(mcap) = a + b·log(TVL)`,
+  plus a per-category offset: the category's mean log residual under the curve, shrunk by
+  `n / (n + 8)` so thin categories are pulled toward the curve.
+- `implied = size curve × category offset × growth × maturity × breadth`
   - growth: the 7-day TVL change, clamped to −40%…+120%, weight 0.35
   - maturity: 0.80 for a new listing, rising to 1.20 after four years tracked with no
     token (unknown listing date: 0.85)
   - breadth: +3% per additional chain, up to five
+- Each row's range is the model's own interquartile residual band, and each row carries a
+  farm verdict net of gas for a $1,000 / 4-week farmer. Out of sample, the v4 core's
+  leave-one-out typical miss is ×3.58 against the old core's ×5.16.
 
 On this snapshot the board holds 198 protocols: all 40 on the house watchlist plus 158
 early finds below its $50M floor. Live-token protocols are never ranked; the 24 largest
-ride along as the comparables the multiples came from. The dashboard recomputes each
+ride along as the comparables the curve and offsets were fitted on. The dashboard recomputes each
 row's implied value in the page from the same factors, so board and code visibly agree.
 
 ## Run it

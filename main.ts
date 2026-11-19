@@ -61,7 +61,7 @@ const boardDoc = {
   comparables: radar.comparables.length,
   universe: radar.universe,
   validation: radar.validation,
-  loo: radar.loo,
+  tournament: radar.tournament,
   curve: radar.curve,
   rows: board,
 };
@@ -71,12 +71,13 @@ copyTree(join(here, 'dashboard'), join(out, 'dashboard'));
 copyTree(join(here, 'screenshots'), join(out, 'screenshots'));
 writeFileSync(join(out, 'dossier.json'), buildDossier(out, { text_max_bytes: 65536 }));
 
+const chosenCore = radar.tournament.candidates.find((c) => c.name === radar.tournament.chosen) ?? radar.tournament.candidates[0]!;
 const dossierBytes = statSync(join(out, 'dossier.json')).size;
 process.stdout.write(
   `pulse radar: ${board.length} rows, ${radar.comparables.length} comparables, ` +
   `top ${board[0]!.slug} at $${board[0]!.implied_value_usd.toLocaleString('en-US')}, ` +
   `universe ${radar.universe.ranked}+${radar.universe.set_aside}+${radar.universe.already_trading}=${radar.universe.total}, ` +
   `holdout typical miss x${radar.validation.typical_miss_factor.toFixed(2)}, spearman ${radar.validation.spearman.toFixed(2)}, ` +
-  `LOO k=${radar.loo.chosen_k} spearman ${radar.loo.chosen.spearman.toFixed(2)}, curve R2 ${radar.curve.r2.toFixed(2)}, ` +
+  `LOO chosen core miss x${chosenCore.typical_miss_factor.toFixed(2)}, ${chosenCore.within_2x}/${radar.tournament.n} within 2x, curve R2 ${radar.curve.r2.toFixed(2)}, ` +
   `${radar.validation.recompute_match}, dossier ${dossierBytes} bytes\n`,
 );
